@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -44,6 +45,9 @@ type packet struct {
 	Data				[]byte
 }
 
+type server_properties struct {
+	Server_ip_address string
+}
 var status int
 var username string
 var(
@@ -54,6 +58,15 @@ var characters_per_line int
 var horizontal_line []byte
 
 func main() {
+
+	json_fd, err := os.Open("./server_address.json")
+	if err == nil {
+		fmt.Println("server: Failed to open json")
+		os.Exit(1)
+	}
+	json_bytes, err := io.ReadAll(json_fd)
+	var ip_address server_properties
+	err = json.Unmarshal(json_bytes, &ip_address)
 
 	// Get the file descriptor for standard output
     fd := int(syscall.Stdout)
@@ -72,7 +85,7 @@ func main() {
 	create_horizantal_line()
 
 	// establish connection
-	connection, err := net.Dial(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
+	connection, err := net.Dial(SERVER_TYPE, ip_address.Server_ip_address + ":"+SERVER_PORT)
 	if err != nil {
 			panic(err)
 	}
