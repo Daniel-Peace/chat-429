@@ -190,6 +190,7 @@ func serve_client(client_id int, connection net.Conn)(int) {
 		}
 
 		if(packet.Type == QUIT) {
+			sub_client(client_id, connection)
 			return	OK
 		}
 
@@ -272,4 +273,22 @@ func name_is_taken(username string)(bool) {
 	}
 
 	return false
+}
+
+func sub_client(client_id int, connection net.Conn) {
+	active_clients_mutex.Lock()
+	defer active_clients_mutex.Unlock()
+
+	active_clients--
+
+	clients_mutex.Lock()
+	defer clients_mutex.Unlock()
+
+	clients[client_id].connection = nil
+	clients[client_id].Username = ""
+	clients[client_id].In_use = false
+	clients[client_id].State = REGISTERING
+	clients[client_id].Id = -1
+
+	connection.Close()
 }
