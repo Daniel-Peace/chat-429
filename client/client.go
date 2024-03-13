@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"os/signal"
 	"sync"
+	"golang.org/x/crypto/ssh/terminal" // Import the terminal package
 )
 const (
 	SERVER_HOST = "localhost"
@@ -47,18 +48,42 @@ var username string
 var(
 	chat_strand	[]packet
 	mutex_chat	sync.Mutex
-) 
+)
+var characters_per_line int 
+var horizantal_line []byte
 
 func main() {
+
+	// Get the file descriptor for standard output
+    fd := int(syscall.Stdout)
+
+    // Get the terminal size
+    width, _, err := terminal.GetSize(fd)
+    if err != nil {
+        fmt.Println("Error getting terminal size:", err)
+        return
+    }
+	characters_per_line = width
+
+    // Print the number of columns (characters per line)
+    fmt.Println("Number of characters per line:", characters_per_line)
+
+	create_horizantal_line()
+
 	// establish connection
 	connection, err := net.Dial(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
 	if err != nil {
 			panic(err)
 	}
-	fmt.Println("-----------------------------------------------------------------------")
+	fmt.Println(string(horizantal_line))
 	fmt.Println("system: Successfully connected to server")
 	fmt.Println("\t- address:\t ", SERVER_HOST)
 	fmt.Println("\t- port:\t\t ", SERVER_PORT)
+	fmt.Println(string(horizantal_line))
+	time.Sleep(1 * time.Second)
+
+	print_splash_screen()
+	clear_terminal()
 
 	// Create a channel to receive signals
     sigChan := make(chan os.Signal, 1)
@@ -92,16 +117,18 @@ func register_user(connection net.Conn)(is_registered bool) {
 	// creating scanner
 	scanner := bufio.NewScanner(os.Stdin)
 
+	// prompting user
+	fmt.Println(string(horizantal_line))
+	fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
+	fmt.Println("Username requirements:")
+	fmt.Println("- Must start with: \"A-Z\" or \"a-z\"")
+	fmt.Println("- Must end with: \"A-Z\", \"a-z\", or \"0-9\"")
+	fmt.Println("- Mmay contain: \"A-Z\", \"a-z\", \"0-9\", \"-\", \"_\"")
+	fmt.Println("- Must be 5-20 characters long")
+	fmt.Println(string(horizantal_line))
+	
+
 	for {
-		// prompting user
-		fmt.Println("-----------------------------------------------------------------------")
-		fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
-		fmt.Println("Username requirements:")
-		fmt.Println("- Must start with: \"A-Z\" or \"a-z\"")
-		fmt.Println("- Must end with: \"A-Z\", \"a-z\", or \"0-9\"")
-		fmt.Println("- Mmay contain: \"A-Z\", \"a-z\", \"0-9\", \"-\", \"_\"")
-		fmt.Println("- Must be 5-20 characters long")
-		fmt.Println("-----------------------------------------------------------------------")
 		fmt.Print("-> ")
 
 	    // getting input from user
@@ -110,6 +137,7 @@ func register_user(connection net.Conn)(is_registered bool) {
 			// storing scanned text in variable
 			username = scanner.Text()			
 		}
+		fmt.Println(string(horizantal_line))
 
 		// declaring registration packet
 		var packet packet
@@ -145,9 +173,11 @@ func register_user(connection net.Conn)(is_registered bool) {
 		switch(packet.Type) {
 		case DENY:
 			fmt.Printf("system: %s\n", string(packet.Data))
+			fmt.Println(string(horizantal_line))
 
 		case ACCEPT:
 			fmt.Printf("system: %s\n", string(packet.Data))
+			fmt.Println(string(horizantal_line))
 			return true
 		}
 	}
@@ -169,7 +199,7 @@ func message(connection net.Conn)(){
 			// storing scanned text in variable
 			msg = scanner.Text()			
 		}
-		fmt.Println("-----------------------------------------------------------------------")
+		fmt.Println(string(horizantal_line))
 
 		if msg == "/exit" {
 			packet.Type = QUIT
@@ -278,8 +308,9 @@ func print_chat_strand(){
 	cmd.Stdout = os.Stdout
 	cmd.Run()
 	fmt.Print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
-	fmt.Println("-----------------------------------------------------------------------")
-	fmt.Println("\tThis is the beggining of the COMP 429 group chat")
+	fmt.Println(string(horizantal_line))
+	start_of_chat_banner := "This is the beggining of the COMP 429 group chat"
+	fmt.Printf("%*s\n",((characters_per_line - len(start_of_chat_banner)) / 2) + len(start_of_chat_banner), start_of_chat_banner)
 	fmt.Print("\n\n")
 
 	for _, packet := range chat_strand  {
@@ -293,7 +324,7 @@ func print_chat_strand(){
 				}
 				copy(username_buffer, []byte(username))
 				fmt.Print("\n")
-				fmt.Printf("%*s\n", 71, string(username_buffer))
+				fmt.Printf("%*s\n", characters_per_line, string(username_buffer))
 
 				index := 0
 				closest_space := 0
@@ -301,8 +332,8 @@ func print_chat_strand(){
 				formatted_string := make([]byte, len(packet.Data) - 1)
 				formatted_string = []byte(packet.Data)
 				
-				fmt.Printf("%*s\n", 71, " __________________________")
-				fmt.Printf("%*s\n", 71, "|                          ")
+				fmt.Printf("%*s\n", characters_per_line, " __________________________")
+				fmt.Printf("%*s\n", characters_per_line, "|                          ")
 				
 				var temp_string string
 				output := make([]byte, 27)
@@ -323,7 +354,7 @@ func print_chat_strand(){
 							temp_string = "| " + string(formatted_string[last_space:closest_space])
 						}
 						copy(output, []byte(temp_string))
-						fmt.Printf("%*s\n", 71, string(output))
+						fmt.Printf("%*s\n", characters_per_line, string(output))
 						last_space = closest_space
 					} 
 					index++
@@ -339,8 +370,8 @@ func print_chat_strand(){
 					temp_string = "| " + string(formatted_string[last_space:])
 				}
 				copy(output, []byte(temp_string))
-				fmt.Printf("%*s\n", 71, string(output))
-				fmt.Printf("%*s\n", 71, "|__________________________")
+				fmt.Printf("%*s\n", characters_per_line, string(output))
+				fmt.Printf("%*s\n", characters_per_line, "|__________________________")
 			} else {
 				username := "\n" + packet.Sender_username + ": "
 				fmt.Println(username)
@@ -397,10 +428,69 @@ func print_chat_strand(){
 	}
 
 	if chat_strand == nil {
-		fmt.Println("\n\n\n-----------------------------------------------------------------------")
+		fmt.Print("\n\n\n")
+		fmt.Println(string(horizantal_line))
 		fmt.Print("-> ")
 	} else {
-		fmt.Println("\n\n\n-----------------------------------------------------------------------")
+		fmt.Println("\n\n\n")
+		fmt.Println(string(horizantal_line))
 		fmt.Print("-> ")
+	}
+}
+
+func clear_terminal(){
+	// Clear the screen
+	cmd := exec.Command("clear")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
+
+func print_splash_screen(){
+	clear_terminal()
+	loading_bar := make([]byte, characters_per_line)
+	for i := 0; i < characters_per_line; i++ {
+		fmt.Print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+		banner_line_1 := "__        __   _                         "
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_1)) / 2) + len(banner_line_1), banner_line_1)
+		banner_line_2 := "\\ \\      / /__| | ___ ___  _ __ ___   ___"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_2)) / 2) + len(banner_line_2), banner_line_2)
+		banner_line_3 :=" \\ \\ /\\ / / _ \\ |/ __/ _ \\| '_ ` _ \\ / _ \\"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_3)) / 2) + len(banner_line_3), banner_line_3)
+		banner_line_4 := "  \\ V  V /  __/ | (_| (_) | | | | | |  __/"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_4)) / 2) + len(banner_line_4), banner_line_4)
+		banner_line_5 := "   \\_/\\_/ \\___|_|\\___\\___/|_| |_| |_|\\___|"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_5)) / 2) + len(banner_line_5), banner_line_5)
+		banner_line_6 := "_____  "
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_6)) / 2) + len(banner_line_6), banner_line_6)
+		banner_line_7 := "|_   _|__"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_7)) / 2) + len(banner_line_7), banner_line_7)
+		banner_line_8 := "  | |/ _ \\"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_8)) / 2) + len(banner_line_8), banner_line_8)
+		banner_line_9 := "   | | (_) |"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_9)) / 2) + len(banner_line_9), banner_line_9)
+		banner_line_10 := "  |_|\\___/"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_10)) / 2) + len(banner_line_10), banner_line_10)
+		banner_line_11 := "  ____ _   _    _  _____ _  _  ____   ___"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_11)) / 2) + len(banner_line_11), banner_line_11)
+		banner_line_12 := " / ___| | | |  / \\|_   _| || ||___ \\ / _ \\"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_12)) / 2) + len(banner_line_12), banner_line_12)
+		banner_line_13 := "  | |   | |_| | / _ \\ | | | || |_ __) | (_) |"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_13)) / 2) + len(banner_line_13), banner_line_13)
+		banner_line_14 := "  | |___|  _  |/ ___ \\| | |__   _/ __/ \\__, |"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_14)) / 2) + len(banner_line_14), banner_line_14)
+		banner_line_15 := " \\____|_| |_/_/   \\_\\_|    |_||_____|  /_/"
+		fmt.Printf("%*s\n",((characters_per_line - len(banner_line_15)) / 2) + len(banner_line_15), banner_line_15)
+		fmt.Print("\n\n\n\n\n\n\n\n")
+		fmt.Println(string(horizantal_line))
+		fmt.Println(string(loading_bar))
+		fmt.Println(string(horizantal_line))
+		loading_bar = append(loading_bar, '=')
+		time.Sleep(10000000)
+	}
+}
+
+func create_horizantal_line(){
+	for i := 0; i < characters_per_line; i++{
+		horizantal_line = append(horizantal_line, '-')
 	}
 }
