@@ -1,6 +1,6 @@
 package main
 
-import(
+import (
 	"encoding/json"
 	"fmt"
 	"net"
@@ -17,79 +17,93 @@ const (
 	SERVER_TYPE = "tcp"
 
 	// other
-	MAX_CLIENTS = 20
+	MAX_CLIENTS     = 20
 	MAX_PACKET_SIZE = 1024
-	MAX_DATA_SIZE = 512
+	MAX_DATA_SIZE   = 512
 )
 
 // server states
 const (
-	OK     	= iota	// 0
-	ABORT			// 1
-	EXIT			// 2
+	OK    = iota // 0
+	ABORT        // 1
+	EXIT         // 2
 )
 
 // client states
 const (
-	REGISTERING	= iota	// 0
-	MESSAGING 			// 1
-	QUITTING 			// 2
+	REGISTERING = iota // 0
+	MESSAGING          // 1
+	QUITTING           // 2
 )
 
 // packet types
 const (
-	ACCEPT	= iota	// 0
-	DENY			// 1
-	MESSAGE 		// 2
-	REGISTRATION	// 3
-	QUIT			// 4
+	ACCEPT       = iota // 0
+	DENY                // 1
+	MESSAGE             // 2
+	REGISTRATION        // 3
+	QUIT                // 4
 )
+
+type client_acount_info struct {
+	Username string
+	Password string
+}
 
 // struct for holding client data
 type client struct {
-	Username	string
-	Id 			int
-	connection	net.Conn
-	In_use		bool
-	State		int
+	account_info client_acount_info
+	Id           int
+	connection   net.Conn
+	In_use       bool
+	State        int
 }
 
 type packet struct {
-	Type				int
-	Sender_username 	string
-	Sender_id			int
-	Data				[]byte
+	Type            int
+	Sender_username string
+	Sender_id       int
+	Data            []byte
 }
 
 // creating array of client structs
 var (
-	clients      	[MAX_CLIENTS]client
-	clients_mutex 	sync.Mutex
+	clients       [MAX_CLIENTS]client
+	clients_mutex sync.Mutex
 )
 
 var (
-	active_clients 			int
-	active_clients_mutex	sync.Mutex
+	active_clients       int
+	active_clients_mutex sync.Mutex
 )
 
+var (
+	registered_usernames       []string
+	registered_usernames_mutex sync.Mutex
+)
 
-func main(){
+func main() {
+	fmt.Println("system: Starting server...")
+	fmt.Println("system: Creating socket...")
+
+	// creating socket
+	server, err := net.Listen(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
+	if err != nil {
+		fmt.Println("system: Error listening:", err.Error())
+		os.Exit(1)
+	}
+
+	// closes server when main exits
+	defer server.Close()
+
+	fmt.Println("system: Successfully created socket")
 
 	// initialize global vars
 	initialize_server()
 
-	// creating socket and setting it to listen
-	server, err := net.Listen(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
-	if err != nil {
-		fmt.Println("server: Error listening:", err.Error())
-		os.Exit(1)
-	}
-	// defering the closing of the server till the main function ends
-	defer server.Close()
-
-	// socket setup successfully
-	fmt.Println("server: Listening on " + SERVER_HOST + ":" + SERVER_PORT)
-	fmt.Println("server: Waiting for client...")
+	fmt.Println("system: Server listening on " + SERVER_HOST + ":" + SERVER_PORT)
+	fmt.Println("system: Successfully initialized srever")
+	fmt.Println("system: Waiting for client...")
 
 	for {
 		if active_clients < 10 {
@@ -99,10 +113,10 @@ func main(){
 				fmt.Println("Error accepting: ", err.Error())
 				os.Exit(1)
 			}
-			fmt.Println("server: client connected")
+			fmt.Println("system: client connected")
 
 			// adding client to clients
-			client_id, status :=add_client(connection)
+			client_id, status := add_client(connection)
 			if status == ABORT {
 				// TODO: create abort method to shut down server
 				break
@@ -121,18 +135,22 @@ func initialize_server() {
 	clients_mutex.Lock()
 	defer clients_mutex.Unlock()
 
+	fmt.Println("system: Initializing active_clients...")
 	active_clients = 0
+	fmt.Println("system: Successfully initialized active_clients")
 
-	for _, current_client  := range clients {
+	fmt.Println("system: Initializing list for clients...")
+	for _, current_client := range clients {
 		current_client.Username = ""
 		current_client.Id = -1
 		current_client.connection = nil
 		current_client.In_use = false
 		current_client.State = REGISTERING
 	}
+	fmt.Println("system: Successfully initialized list for clients...")
 }
 
-func add_client(connection net.Conn)(int, int) {
+func add_client(connection net.Conn) (int, int) {
 	increment_active_clients()
 
 	clients_mutex.Lock()
@@ -158,7 +176,7 @@ func increment_active_clients() {
 	active_clients++
 }
 
-func find_free_space()(int){
+func find_free_space() int {
 	for index, current_client := range clients {
 		if !current_client.In_use {
 			return index
@@ -168,11 +186,10 @@ func find_free_space()(int){
 	return -1
 }
 
-func serve_client(client_id int, connection net.Conn)(int) {
+func serve_client(client_id int, connection net.Conn) int {
 	for {
 		var packet packet
 		json_packet := make([]byte, MAX_PACKET_SIZE)
-	
 
 		// reading packet from user
 		amount_read, err := connection.Read(json_packet)
@@ -189,9 +206,9 @@ func serve_client(client_id int, connection net.Conn)(int) {
 			os.Exit(1)
 		}
 
-		if(packet.Type == QUIT) {
+		if packet.Type == QUIT {
 			sub_client(client_id, connection)
-			return	OK
+			return OK
 		}
 
 		// getting latest state if client
@@ -200,24 +217,24 @@ func serve_client(client_id int, connection net.Conn)(int) {
 		clients_mutex.Unlock()
 
 		switch client_state {
-			case REGISTERING:
-				register_client(client_id, string(packet.Data), connection)
-			case MESSAGING:
-				clients_mutex.Lock()
-				for i := 0; i < MAX_CLIENTS; i++ {
-					if clients[i].In_use && clients[i].Id != client_id {
-						_, err = clients[i].connection.Write(json_packet)
-						if err != nil {
-							fmt.Println("server: Error writing:", err)
-						}
+		case REGISTERING:
+			register_client(client_id, string(packet.Data), connection)
+		case MESSAGING:
+			clients_mutex.Lock()
+			for i := 0; i < MAX_CLIENTS; i++ {
+				if clients[i].In_use && clients[i].Id != client_id {
+					_, err = clients[i].connection.Write(json_packet)
+					if err != nil {
+						fmt.Println("server: Error writing:", err)
 					}
 				}
-				clients_mutex.Unlock()
+			}
+			clients_mutex.Unlock()
 		}
 	}
 }
 
-func register_client(client_id int, username string, connection net.Conn)(){
+func register_client(client_id int, username string, connection net.Conn) {
 	fmt.Printf("server: validating the username \"%s\"\n", username)
 	var packet packet
 
@@ -244,9 +261,13 @@ func register_client(client_id int, username string, connection net.Conn)(){
 		packet.Data = []byte(msg)
 
 		clients_mutex.Lock()
-		clients[client_id].Username = username
+		clients[client_id].account_info.Username = username
 		clients[client_id].State = MESSAGING
 		clients_mutex.Unlock()
+
+		registered_usernames_mutex.Lock()
+		registered_usernames = append(registered_usernames, username)
+		registered_usernames_mutex.Unlock()
 	}
 
 	// marshaling data
@@ -262,7 +283,7 @@ func register_client(client_id int, username string, connection net.Conn)(){
 	}
 }
 
-func name_is_taken(username string)(bool) {
+func name_is_taken(username string) bool {
 	clients_mutex.Lock()
 	defer clients_mutex.Unlock()
 
@@ -285,7 +306,8 @@ func sub_client(client_id int, connection net.Conn) {
 	defer clients_mutex.Unlock()
 
 	clients[client_id].connection = nil
-	clients[client_id].Username = ""
+	clients[client_id].account_info.Username = ""
+	clients[client_id].account_info.Password = ""
 	clients[client_id].In_use = false
 	clients[client_id].State = REGISTERING
 	clients[client_id].Id = -1
