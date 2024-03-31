@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -10,10 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
-	"strconv"
 )
 
 // constants
@@ -78,6 +77,7 @@ const (
 	JOINED_MESSAGE            // 7
 	LEFT_MESSAGE              // 8
 	COMMAND
+	CONNECT
 )
 
 // roles that a user can have
@@ -137,38 +137,38 @@ var (
 	registered_accounts_mutex sync.Mutex
 )
 
-var stringToInt = map[string]int{
-	"/help":  			0,
-	"/main":   			2,
-	"/log-out": 		3,
-	"/list-c":			4,
-	"/list-s": 			5,
-	"/disconnect-c":	6,
-	"/disconnect-s":	7,
-	"/ban-c":			8,
-	"/ban-s": 			9,
-	"/create":			10,
-	"/delete":			11,
-	"/add-mod":			12,
-	"/rm-mod":			13,
-}
+// var stringToInt = map[string]int{
+// 	"/help":  			0,
+// 	"/main":   			2,
+// 	"/log-out": 		3,
+// 	"/list-c":			4,
+// 	"/list-s": 			5,
+// 	"/disconnect-c":	6,
+// 	"/disconnect-s":	7,
+// 	"/ban-c":			8,
+// 	"/ban-s": 			9,
+// 	"/create":			10,
+// 	"/delete":			11,
+// 	"/add-mod":			12,
+// 	"/rm-mod":			13,
+// }
 
 /*
  * This is the main function of the server
  */
 func main() {
-	server := start_server()
-	defer server.Close()
+	passive_socket := start_server()
+	defer passive_socket.Close()
 
 	for {
-		handle_incoming_clients(server)
+		handle_incoming_clients(passive_socket)
 	}
 }
 
 /*
  * This function initializes everything in order to start the server
  */
-func start_server() net.Listener {
+func start_server()(net.Listener) {
 	fmt.Println("system: Starting server...")
 
 	// initializing the counter for the number of active clients
@@ -181,17 +181,17 @@ func start_server() net.Listener {
 	read_account_json()
 
 	// creating passive socket
-	socket := create_socket()
+	command_socket := create_socket()
 
 	// setting up signal catcher for ctrl-c
-	setup_signal_handler(socket)
+	setup_signal_handler(command_socket)
 
 	// displaying server status
 	fmt.Println("system: Server listening on " + SERVER_HOST + ":" + SERVER_PORT)
 	fmt.Println("system: Successfully initialized srever")
 	fmt.Println("system: Waiting for client...")
 
-	return socket
+	return command_socket
 }
 
 /*
@@ -386,9 +386,9 @@ func remove_file(path string) {
  * This function handles accepting incoming clients
  * and sends them to be served if the server has space.
  */
-func handle_incoming_clients(server net.Listener) {
-	client_connection := accept_client(server)
-	serve_client_if_space(client_connection)
+func handle_incoming_clients(passive_socket net.Listener) {
+	command_socket := accept_client(passive_socket)
+	serve_client_if_space(command_socket)
 }
 
 /*
@@ -396,13 +396,13 @@ func handle_incoming_clients(server net.Listener) {
  * It exits if there is an error and returns the net.Conn upon success
  */
 func accept_client(server net.Listener) net.Conn {
-	connection, err := server.Accept()
+	command_socket, err := server.Accept()
 	if err != nil {
 		fmt.Println("Error accepting: ", err.Error())
 		os.Exit(1)
 	}
 	fmt.Println("system: client connected")
-	return connection
+	return command_socket
 }
 
 func store_accounts_to_json() {
@@ -452,14 +452,14 @@ func write_to_file(file *os.File, json_data []byte) {
  * If there is not it returns false
  * It exits if there is an error and returns the net.Conn upon success
  */
-func serve_client_if_space(client_connection net.Conn) {
+func serve_client_if_space(command_socket net.Conn) {
 	// checking if the server is full
 	num_of_active_clients_mutex.Lock()
 	if num_of_active_clients >= 10 {
 		fmt.Println("system: server is full, disconnecting client")
 		packet := packet{Type: QUIT, Data: []byte("Server is full. Try again later")}
-		send_packet(packet, client_connection)
-		client_connection.Close()
+		send_packet(packet, command_socket)
+		command_socket.Close()
 		return
 	}
 
@@ -468,19 +468,43 @@ func serve_client_if_space(client_connection net.Conn) {
 	// incrementing the number of clients online
 	increment_active_clients()
 
+	// connect data socket
+	json_data, amount_read:= read_from_connection(command_socket)
+
+	fmt.Println(string(json_data))
+	var packet packet
+	json.Unmarshal(json_data[:amount_read], &packet)
+	fmt.Printf("%d --------- %s\n", packet.Type, string(packet.Data))
+	if packet.Type != CONNECT {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	args := strings.Split(string(packet.Data), " ")
+
+	data_socket,_ := net.Dial(args[0], args[1])
+
+	message := make([]byte, MAX_PACKET_SIZE)
+	amount_read, err := data_socket.Read(message)
+	if err != nil {
+		error_exit(err)
+	}
+	fmt.Println(string(message[:amount_read]))
+	
+
+
 	// finding a free space in the list of clients
 	index := find_free_space()
 
 	// initializing the space
 	active_clients_mutex.Lock()
 	active_clients[index].Id = index
-	active_clients[index].connection = client_connection
+	active_clients[index].connection = command_socket
 	active_clients[index].State = CHOOSING_SIGN_IN_OPT
 	active_clients_mutex.Unlock()
 
 	// serving the client
 	fmt.Println("system: serving client")
-	go serve_client(index, client_connection)
+	go serve_client(index, command_socket)
 }
 
 /*
@@ -1053,17 +1077,6 @@ func decrement_num_of_active_clients() {
 	num_of_active_clients_mutex.Lock()
 	defer num_of_active_clients_mutex.Unlock()
 	num_of_active_clients--
-}
-
-/*
- * This function trims null characters from json data
- */
-func trim_null_characters(data []byte) []byte {
-	nullIndex := bytes.IndexByte(data, 0)
-	if nullIndex != -1 {
-		data = data[:nullIndex]
-	}
-	return data
 }
 
 /*

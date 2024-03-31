@@ -22,8 +22,10 @@ import (
 // server information
 const (
 	SERVER_HOST = "localhost"
-	SERVER_PORT = "7777"
-	SERVER_TYPE = "tcp"
+	CLIENT_HOST = "localhost"
+	COMMAND_PORT = "7777"
+	DATA_PORT = "7778"
+	CONNECTION_TYPE = "tcp"
 )
 
 // general constants
@@ -58,6 +60,7 @@ const (
 	JOINED_MESSAGE
 	LEFT_MESSAGE
 	COMMAND
+	CONNECT
 )
 
 // commands type
@@ -99,7 +102,8 @@ var terminal_width int
 var terminal_height int
 var horizontal_line []byte
 var vertical_space []byte
-var connection net.Conn
+var command_socket net.Conn
+var data_socket net.Conn
 
 var (
 	chat_strand []packet
@@ -132,6 +136,8 @@ func main() {
 	// initialize client
 	initialize_client()
 
+	data_socket.Write([]byte("IT WORKED!!!"))
+
 	// main loop for handling states of the client
 	for {
 		switch client_status {
@@ -159,6 +165,7 @@ func initialize_client() {
 	create_horizantal_line()
 	create_vertical_space()
 	connect_to_server()
+	establish_data_connection()
 	setup_signal_handler()
 	print_client_status()
 	print_splash_screen()
@@ -170,7 +177,7 @@ func initialize_client() {
  */
 func connect_to_server() {
 	var err error
-	connection, err = net.Dial(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
+	command_socket, err = net.Dial(CONNECTION_TYPE, SERVER_HOST+":"+COMMAND_PORT)
 	if err != nil {
 		error_exit(err)
 	}
@@ -194,7 +201,7 @@ func error_exit(err error) {
 func disconnect_from_server() {
 	packet := packet{Type: QUIT, Data: []byte("Error with client")}
 	send_packet(packet)
-	connection.Close()
+	command_socket.Close()
 }
 
 /*
@@ -215,7 +222,7 @@ func print_client_status() {
 	fmt.Println(string(horizontal_line))
 	fmt.Println("system: Successfully connected to server")
 	fmt.Println("\t- address:\t ", SERVER_HOST)
-	fmt.Println("\t- port:\t\t ", SERVER_PORT)
+	fmt.Println("\t- port:\t\t ", COMMAND_PORT)
 	fmt.Println(string(horizontal_line))
 	time.Sleep(1 * time.Second)
 }
@@ -680,7 +687,7 @@ func read_packet() packet {
  * This function writes to the server
  */
  func write_to_connection(data []byte) {
-	_, err := connection.Write(data)
+	_, err := command_socket.Write(data)
 	if err != nil {
 		error_exit(err)
 	}
@@ -691,7 +698,7 @@ func read_packet() packet {
  */
  func read_from_connection() ([]byte, int) {
 	data := make([]byte, MAX_PACKET_SIZE)
-	amount_read, err := connection.Read(data)
+	amount_read, err := command_socket.Read(data)
 	if err != nil {
 		error_exit(err)
 	}
@@ -739,7 +746,7 @@ func unmarshal_packet(json_data []byte) packet {
 	send_packet(packet)
 
 	// closing connection
-	connection.Close()
+	command_socket.Close()
 
 	// exiting program
 	os.Exit(0)
@@ -771,6 +778,49 @@ func create_vertical_space() {
 	for i := 0; i < terminal_height; i++ {
 		vertical_space = append(vertical_space, '\n')
 	}
+}
+
+func establish_data_connection() {
+
+	tmp_passive_socket := create_socket()
+	packet := packet{Type: CONNECT, Data: []byte(CONNECTION_TYPE + " " + CLIENT_HOST + ":" + DATA_PORT)}
+	fmt.Printf("%d --------- %s\n", packet.Type, string(packet.Data))
+	send_packet(packet)
+	data_socket = accept_connection(tmp_passive_socket)
+	tmp_passive_socket.Close()
+}
+
+/*
+ * This function creates a listening socket and handles the possible errors
+ */
+ func create_socket() net.Listener {
+	fmt.Println("system: Creating socket...")
+
+	// creating socket
+	listener, err := net.Listen(CONNECTION_TYPE, CLIENT_HOST+":"+DATA_PORT)
+
+	// handling erros
+	if err != nil {
+		error_exit(err)
+	}
+
+	fmt.Println("system: Successfully created socket")
+
+	return listener
+}
+
+/*
+ * This function accepts a client's connection
+ * It exits if there is an error and returns the net.Conn upon success
+ */
+ func accept_connection(passive_socket net.Listener) net.Conn {
+	connection, err := passive_socket.Accept()
+	if err != nil {
+		fmt.Println("Error accepting: ", err.Error())
+		os.Exit(1)
+	}
+	fmt.Println("system: server connected")
+	return connection
 }
 
 // -------------------------------------------------------------------------------------------------------
@@ -1181,7 +1231,7 @@ func send_quit_packet() {
 // shutsdown client
 func shutdown() {
 	fmt.Println("system: Shutting down...")
-	connection.Close()
+	command_socket.Close()
 	os.Exit(0)
 }
 
