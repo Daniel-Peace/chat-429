@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,8 +34,9 @@ const (
 
 // ansi colors constants
 const (
-	Reset = "\033[0m"
-	Green = "\033[32m"
+	Reset 	= "\033[0m"
+	Green 	= "\033[32m"
+	Yellow 	= "\033[33m"
 )
 
 // client states
@@ -57,8 +57,7 @@ const (
 	QUIT
 	LOGIN
 	CHOOSE_SIGN_IN_OPT
-	JOINED_MESSAGE
-	LEFT_MESSAGE
+	CHAT_STATUS_MSG
 	COMMAND
 	CONNECT
 )
@@ -94,6 +93,12 @@ type packet struct {
 	Type     int
 	Username string
 	Data     []byte
+}
+
+type command_packet struct {
+	Type 		int
+	Username 	string
+	Arguments 	[]byte
 }
 
 var client_status int
@@ -135,8 +140,6 @@ var command_to_int = map[string]int{
 func main() {
 	// initialize client
 	initialize_client()
-
-	data_socket.Write([]byte("IT WORKED!!!"))
 
 	// main loop for handling states of the client
 	for {
@@ -184,24 +187,14 @@ func connect_to_server() {
 }
 
 /*
- * This function gets passed a type of error and closes the
- * client while informing the server that the client is disconnecting
- */
-func error_exit(err error) {
-	clear_terminal()
-	fmt.Println("system: ERROR -", err)
-	disconnect_from_server()
-	os.Exit(1)
-}
-
-/*
  * This function sends a packet to the server to inform
  * it that the client is disconnecting
  */
 func disconnect_from_server() {
 	packet := packet{Type: QUIT, Data: []byte("Error with client")}
-	send_packet(packet)
+	send_data_packet(packet)
 	command_socket.Close()
+	data_socket.Close()
 }
 
 /*
@@ -293,7 +286,7 @@ func choose_sign_in_opt() {
 	}
 
 	// sending choice to server
-	send_packet(packet)
+	send_data_packet(packet)
 }
 
 /*
@@ -361,10 +354,10 @@ func choose_sign_in_opt() {
 		packet := packet{Type: REGISTRATION, Data: []byte(input)}
 
 		// sending packet containging username
-		send_packet(packet)
+		send_data_packet(packet)
 
 		// waiting for response
-		packet = read_packet()
+		packet = read_data_packet()
 
 		// checking response from server
 		if packet.Type == DENY {
@@ -441,10 +434,10 @@ func choose_sign_in_opt() {
 		packet := packet{Type: REGISTRATION, Data: []byte(input)}
 
 		// sending password packet
-		send_packet(packet)
+		send_data_packet(packet)
 
 		// waiting on response
-		packet = read_packet()
+		packet = read_data_packet()
 
 		// checking response from server
 		if packet.Type == DENY {
@@ -493,6 +486,7 @@ func choose_sign_in_opt() {
 		}
 
 		if is_comand(input) {
+			fmt.Println("It is a command")
 			handle_command(input)
 			clear_terminal()
 			fmt.Println(string(horizontal_line))
@@ -507,10 +501,10 @@ func choose_sign_in_opt() {
 		// initializing packet
 		packet.Type = LOGIN
 		packet.Data = []byte(username)
-		send_packet(packet)
+		send_data_packet(packet)
 
 		// reading packet from server
-		packet = read_packet()
+		packet = read_data_packet()
 
 		// checking if username was accepted
 		if packet.Type == ACCEPT {
@@ -564,10 +558,10 @@ func choose_sign_in_opt() {
 		// initializing packet
 		packet.Type = LOGIN
 		packet.Data = []byte(password)
-		send_packet(packet)
+		send_data_packet(packet)
 
 		// reading packet from server
-		packet = read_packet()
+		packet = read_data_packet()
 
 		// determining if password was accepted
 		if packet.Type == ACCEPT {
@@ -595,9 +589,9 @@ func choose_sign_in_opt() {
 	go handle_inbound_msg()
 
 	// send join message
-	msg := "\n" + username + " has joined the chat\n" + time.Now().Format("02 15:04") + "\n"
-	packet := packet{Type: JOINED_MESSAGE, Data: []byte(msg)}
-	send_packet(packet)
+	msg := "\n" + username + " has joined the chat\n" + time.Now().Format("3:04 PM") + "\n"
+	packet := packet{Type: CHAT_STATUS_MSG, Data: []byte(msg)}
+	send_data_packet(packet)
 
 	// printing the chat strand
 	print_chat_strand()
@@ -635,7 +629,7 @@ func choose_sign_in_opt() {
 		chat_strand = append(chat_strand, packet)
 
 		// sending message to server
-		send_packet(packet)
+		send_data_packet(packet)
 
 		// reprinting chat strand
 		if client_status == MESSAGING {
@@ -651,81 +645,21 @@ func choose_sign_in_opt() {
 	// reading inbound messages
 	for {
 		// reading packet
-		packet := read_packet()
+		packet := read_data_packet()
 
 		// checking packet type
-		if packet.Type == MESSAGE || packet.Type == JOINED_MESSAGE {
+		if packet.Type == MESSAGE || packet.Type == CHAT_STATUS_MSG {
 			// appending new message to chat strand
 			mutex_chat.Lock()
 			chat_strand = append(chat_strand, packet)
 			mutex_chat.Unlock()
 
-			// reprinting updated chat strand
-			print_chat_strand()
+			if client_status == MESSAGING {
+				// reprinting updated chat strand
+				print_chat_strand()
+			}
 		}
 	}
-}
-
-/*
- * This function sends a given packet to the server
- */
-func send_packet(packet packet) {
-	json_data := marshal_packet(packet)
-	write_to_connection(json_data) 
-}
-
-/*
- * This function reads a packet from the server
- */
-func read_packet() packet {
-	json_data, amount_read := read_from_connection()
-	packet := unmarshal_packet(json_data[:amount_read])
-	return packet
-}
-
-/*
- * This function writes to the server
- */
- func write_to_connection(data []byte) {
-	_, err := command_socket.Write(data)
-	if err != nil {
-		error_exit(err)
-	}
-}
-
-/*
- * This function reads from the server
- */
- func read_from_connection() ([]byte, int) {
-	data := make([]byte, MAX_PACKET_SIZE)
-	amount_read, err := command_socket.Read(data)
-	if err != nil {
-		error_exit(err)
-	}
-	return data, amount_read
-}
-
-/*
- * This function marshals a packet into a json file
- */
-func marshal_packet(packet packet) []byte {
-	json_data, err := json.Marshal(packet)
-	if err != nil {
-		fmt.Println("server: Error marshaling data-", err.Error())
-	}
-	return json_data
-}
-
-/*
- * This function unmarshals json data into a packetand handles the possible errors
- */
-func unmarshal_packet(json_data []byte) packet {
-	var packet packet
-	err := json.Unmarshal(json_data, &packet)
-	if err != nil {
-		error_exit(err)
-	}
-	return packet
 }
 
 /*
@@ -743,9 +677,10 @@ func unmarshal_packet(json_data []byte) packet {
 	packet.Type = QUIT
 
 	// sending quit packet to server
-	send_packet(packet)
+	send_data_packet(packet)
 
 	// closing connection
+	data_socket.Close()
 	command_socket.Close()
 
 	// exiting program
@@ -780,13 +715,23 @@ func create_vertical_space() {
 	}
 }
 
+/*
+ * This function creates a second connection with the server for data
+ */
 func establish_data_connection() {
-
+	// creating a tempary passive socket to listen for the server connecting
 	tmp_passive_socket := create_socket()
-	packet := packet{Type: CONNECT, Data: []byte(CONNECTION_TYPE + " " + CLIENT_HOST + ":" + DATA_PORT)}
-	fmt.Printf("%d --------- %s\n", packet.Type, string(packet.Data))
-	send_packet(packet)
+
+	// creating connection packet to be sent
+	packet := command_packet{Type: CONNECT, Username: username, Arguments: []byte(CLIENT_HOST + ":" + DATA_PORT)}
+
+	// sending connection packet
+	send_command_packet(packet)
+
+	// waiting for the server to accept
 	data_socket = accept_connection(tmp_passive_socket)
+
+	// closing the passive socket
 	tmp_passive_socket.Close()
 }
 
@@ -823,6 +768,17 @@ func establish_data_connection() {
 	return connection
 }
 
+/*
+ * This function gets passed a type of error and closes the
+ * client while informing the server that the client is disconnecting
+ */
+ func error_exit(err error) {
+	clear_terminal()
+	fmt.Println("system: ERROR -", err)
+	disconnect_from_server()
+	os.Exit(1)
+}
+
 // -------------------------------------------------------------------------------------------------------
 
 /*
@@ -844,8 +800,9 @@ func print_chat_strand() {
 		// checking if the chat strand is empty
 		if chat_strand != nil {
 
-			if packet.Type == JOINED_MESSAGE {
-				fmt.Println(string(packet.Data))
+			if packet.Type == CHAT_STATUS_MSG {
+				status_message := Yellow + string(packet.Data) + Reset
+				fmt.Println(status_message)
 				continue
 			}
 
@@ -1225,13 +1182,14 @@ func send_quit_packet() {
 	var packet packet
 	packet.Type = QUIT
 
-	send_packet(packet)
+	send_data_packet(packet)
 }
 
 // shutsdown client
 func shutdown() {
 	fmt.Println("system: Shutting down...")
 	command_socket.Close()
+	data_socket.Close()
 	os.Exit(0)
 }
 
@@ -1245,57 +1203,29 @@ func check_and_quit(input string) bool {
 	return false
 }
 
-func is_comand(input string) bool {
-	// parsing command into an array of tokens
-	tokens := strings.Split(input, " ")
-	return command_to_int[tokens[0]] > 0
-}
-
 func handle_command(input string) {
-
-	// splitting up string into tokens of the command
-	tokens := strings.Split(input, " ")
-
 	// sending the command to the server
-	send_command(tokens)
+	packet := parse_command(input)
 
-	switch command_to_int[tokens[0]] {
+	// send command to server
+	send_command_packet(packet)
+
+	switch packet.Type {
 	case HELP:
 		help_command()
 	}
 }
 
-func send_command(command_tokens []string) {
-	var args strings.Builder
-	for i := 0; i < len(command_tokens); i++ {
-		if i != 0 {
-			args.WriteString(" ")
-			args.WriteString(command_tokens[i])
-		} else {
-			args.WriteString(strconv.Itoa(command_to_int[command_tokens[i]]))
-		}
-	}
-	// creating packet
-	var packet packet
-	packet.Type = COMMAND
-	packet.Data = []byte(args.String())
-
-	send_packet(packet)
-}
-
 func help_command() {
-	packet := read_packet()
+	packet := read_command_packet()
+	fmt.Println("Recieved command packet from server")
 	quit_channel := make(chan int)
 
-	if packet.Type != COMMAND {
-		os.Exit(1)
-	}
-
-	if string(packet.Data) == "0" {
-		go display_help_screen(quit_channel, 3)
-	} else if string(packet.Data) == "1" {
+	if string(packet.Arguments) == "0" {
+		go display_help_screen(quit_channel, 0)
+	} else if string(packet.Arguments) == "1" {
 		go display_help_screen(quit_channel, 1)
-	} else if string(packet.Data) == "2" {
+	} else if string(packet.Arguments) == "2" {
 		go display_help_screen(quit_channel, 2)
 	} else {
 		os.Exit(1)
@@ -1321,9 +1251,11 @@ func help_command() {
 		}
 	}
 
-	packet.Type = COMMAND
-	packet.Data = []byte("DONE")
-	send_packet(packet)
+	packet.Type = HELP
+	packet.Username = username
+	packet.Arguments = []byte("DONE")
+
+	send_command_packet(packet)
 }
 
 func display_help_screen(quit chan int, role int) {
@@ -1407,4 +1339,143 @@ func display_admin_commands() {
 	fmt.Println(" - /add-mod <username>\t\t\tGives a user the role moderator")
 	fmt.Print("\n")
 	fmt.Println(" - /rm-mod <username>\t\t\tRemoves the moderator role from a user")
+}
+
+// --------------------------------------------------------------------------------------------------------------
+
+/*
+ * This function sends a packet to the command socket
+ */
+func send_command_packet(packet command_packet)() {
+	json_data := marshal_command_packet(packet)
+	write_to_connection(json_data, command_socket)
+}
+
+/*
+ * This function reads a packet from the command socket
+ */
+func read_command_packet()(command_packet) {
+	json_data, amount_read := read_from_connection(command_socket)
+	packet := unmarshal_command_packet(json_data[:amount_read])
+	return packet
+}
+
+/*
+ * This function sends a packet to the data socket
+ */
+func send_data_packet(packet packet) {
+	json_data := marshal_data_packet(packet)
+	write_to_connection(json_data, data_socket) 
+}
+
+/*
+ * This function reads a packet from the data socket
+ */
+func read_data_packet() packet {
+	json_data, amount_read := read_from_connection(data_socket)
+	packet := unmarshal_data_packet(json_data[:amount_read])
+	return packet
+}
+
+/*
+ * This function writes to a specified socket
+ */
+func write_to_connection(data []byte, connection net.Conn) {
+	_, err := connection.Write(data)
+	if err != nil {
+		error_exit(err)
+	}
+}
+
+/*
+ * This function reads from a specified socket
+ */
+func read_from_connection(connection net.Conn) ([]byte, int) {
+	data := make([]byte, MAX_PACKET_SIZE)
+	amount_read, err := connection.Read(data)
+	if err != nil {
+		error_exit(err)
+	}
+	return data, amount_read
+}
+
+/*
+ * This function marshals a packet into a json file
+ */
+func marshal_data_packet(packet packet) []byte {
+	json_data, err := json.Marshal(packet)
+	if err != nil {
+		fmt.Println("server: Error marshaling data-", err.Error())
+	}
+	return json_data
+}
+
+/*
+ * This function unmarshals json data into a packetand handles the possible errors
+ */
+func unmarshal_data_packet(json_data []byte) packet {
+	var packet packet
+	err := json.Unmarshal(json_data, &packet)
+	if err != nil {
+		error_exit(err)
+	}
+	return packet
+}
+
+/*
+ * This function marshals a packet into a json file
+ */
+func marshal_command_packet(packet command_packet) []byte {
+	json_data, err := json.Marshal(packet)
+	if err != nil {
+		fmt.Println("server: Error marshaling data-", err.Error())
+	}
+	return json_data
+}
+
+/*
+ * This function unmarshals json data into a packetand handles the possible errors
+ */
+func unmarshal_command_packet(json_data []byte) command_packet {
+	var packet command_packet
+	err := json.Unmarshal(json_data, &packet)
+	if err != nil {
+		error_exit(err)
+	}
+	return packet
+}
+
+/*
+ * This function checks if a string is a command
+ */
+func is_comand(input string) bool {
+	tokens := strings.Split(input, " ")
+	return command_to_int[tokens[0]] > 0
+}
+
+/*
+ * This function parses commands
+ */
+func parse_command(input string) command_packet{
+	var packet command_packet
+	var args strings.Builder
+
+	// splitting input string into tokens
+	tokens := strings.Split(input, " ")
+
+	// looping over tokens to build agument string
+	for i := 1; i < len(tokens); i++ {
+		if i != 1 {
+			args.WriteString(":")
+		}
+
+		args.WriteString(tokens[i])
+	}
+
+	// initializing packet
+	packet.Type = command_to_int[tokens[0]]
+	packet.Username = username
+	packet.Arguments = []byte(args.String())
+
+	return packet
 }
