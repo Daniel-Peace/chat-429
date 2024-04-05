@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	//"time"
 )
 
 // ---------------------------------------------------------------------------------------------------
@@ -37,7 +38,6 @@ const (
 const (
 	OK    = iota // 0
 	ABORT        // 1
-	EXIT         // 2
 )
 
 // commands types
@@ -57,15 +57,16 @@ const (
 	CHANGE_TOPIC		// changes topic of a channel
 	ADD_MOD				// gives user the moderator role
 	RM_MOD				// removes the moderator role from a user
+	EXIT
 )
 
 // client states
 const (
-	REGISTERING          = iota // registing account
-	MESSAGING                   // messaging group chat
-	QUITTING                    // quitting application
+	CHOOSING_SIGN_IN_OPT = iota	// selecting to log in register or exit
+	REGISTERING           		// registing account
 	LOGGING_IN                  // logging in to existing account
-	CHOOSING_SIGN_IN_OPT        // selecing to log in or register
+	MESSAGING                   // messaging group chat
+	QUITTING                    // quitting application  
 	IN_HELP_SCREEN              // using the help command
 )
 
@@ -81,6 +82,7 @@ const (
 	CHAT_STATUS_MSG           // 7
 	COMMAND                   // 8
 	CONNECT					  // 9
+	CLOSE					  // 10
 )
 
 // user roles
@@ -550,7 +552,7 @@ func find_free_space() int {
  */
 func serve_client(client client) {
 	go handle_inbound_commands(client)
-
+	fmt.Println("IN SERVER CLIENT")
 	for {
 		// getting latest state if client
 		active_clients_mutex.Lock()
@@ -567,7 +569,7 @@ func serve_client(client client) {
 		case MESSAGING:
 			message(client)
 		case QUITTING:
-			sub_client(client)
+			fmt.Println("system: Closing client routine")
 			return
 		}
 	}
@@ -580,16 +582,14 @@ func choose_sign_in_opt(client client) {
 	// reading packet from client
 	packet := read_data_packet(client)
 
-	// checking if the packet has the expected type
-	if packet.Type != CHOOSE_SIGN_IN_OPT && packet.Type != QUIT {
-		custom_error_exit(OUT_OF_SYNC)
+	// checking if the client has changed state and this function needs to return
+	if packet.Type == CLOSE {
+		return
 	}
 
-	// quitting if user types /exit
-	if packet.Type == QUIT {
-		update_client_state(client, QUIT)
-		client.State = QUIT
-		return
+	// checking if the packet has the expected type
+	if packet.Type != CHOOSE_SIGN_IN_OPT {
+		custom_error_exit(OUT_OF_SYNC)
 	}
 
 	// checking if user selected login or register
@@ -617,16 +617,14 @@ func register_client(client client) {
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
 		print_data_packet(packet)
 
-		// checking if the packet has the expected type
-		if packet.Type != REGISTRATION && packet.Type != QUIT {
-			custom_error_exit(OUT_OF_SYNC)
+		// checking if the client has changed state and this function needs to return
+		if packet.Type == CLOSE {
+			return
 		}
 
-		// quitting if user types /exit
-		if packet.Type == QUIT {
-			update_client_state(client, QUIT)
-			client.State = QUIT
-			return
+		// checking if the packet has the expected type
+		if packet.Type != REGISTRATION {
+			custom_error_exit(OUT_OF_SYNC)
 		}
 
 		username = string(packet.Data)
@@ -655,16 +653,14 @@ func register_client(client client) {
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
 		print_data_packet(packet)
 
-		// checking if the packet has the expected type
-		if packet.Type != REGISTRATION && packet.Type != QUIT {
-			custom_error_exit(OUT_OF_SYNC)
+		// checking if the client has changed state and this function needs to return
+		if packet.Type == CLOSE {
+			return
 		}
 
-		// quitting if user types /exit
-		if packet.Type == QUIT {
-			client = update_client_state(client, QUIT)
-
-			return
+		// checking if the packet has the expected type
+		if packet.Type != REGISTRATION {
+			custom_error_exit(OUT_OF_SYNC)
 		}
 
 		password = string(packet.Data)
@@ -779,17 +775,14 @@ func login(client client) {
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
 		print_data_packet(packet)
 
-		// checking if the packet has the expected type
-		if packet.Type != LOGIN && packet.Type != QUIT {
-			custom_error_exit(OUT_OF_SYNC)
+		// checking if the client has changed state and this function needs to return
+		if packet.Type == CLOSE {
+			return
 		}
 
-		// quitting if user types /exit
-		if packet.Type == QUIT {
-			active_clients_mutex.Lock()
-			active_clients[client.Id].State = QUITTING
-			active_clients_mutex.Unlock()
-			return
+		// checking if the packet has the expected type
+		if packet.Type != LOGIN {
+			custom_error_exit(OUT_OF_SYNC)
 		}
 
 		// checking if an account exists with the given username
@@ -826,17 +819,14 @@ func login(client client) {
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
 		print_data_packet(packet)
 
-		// checking if the packet has the expected type
-		if packet.Type != LOGIN && packet.Type != QUIT && packet.Type != COMMAND {
-			custom_error_exit(OUT_OF_SYNC)
+		// checking if the client has changed state and this function needs to return
+		if packet.Type == CLOSE {
+			return
 		}
 
-		// quitting if user types /exit
-		if packet.Type == QUIT {
-			active_clients_mutex.Lock()
-			active_clients[client.Id].State = QUITTING
-			active_clients_mutex.Unlock()
-			return
+		// checking if the packet has the expected type
+		if packet.Type != LOGIN {
+			custom_error_exit(OUT_OF_SYNC)
 		}
 
 		// checking if password matches account password
@@ -868,17 +858,14 @@ func message(client client) {
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
 		print_data_packet(packet)
 
-		// checking if the packet has the expected type
-		if packet.Type != MESSAGE && packet.Type != QUIT && packet.Type != CHAT_STATUS_MSG {
-			custom_error_exit(OUT_OF_SYNC)
+		// checking if the client has changed state and this function needs to return
+		if packet.Type == CLOSE {
+			return
 		}
 
-		// quitting if user types /exit
-		if packet.Type == QUIT {
-			active_clients_mutex.Lock()
-			active_clients[client.Id].State = QUITTING
-			active_clients_mutex.Unlock()
-			return
+		// checking if the packet has the expected type
+		if packet.Type != MESSAGE && packet.Type != CHAT_STATUS_MSG {
+			custom_error_exit(OUT_OF_SYNC)
 		}
 
 		for i := 0; i < MAX_CLIENTS; i++ {
@@ -1144,7 +1131,10 @@ func handle_inbound_commands(client client) {
 		if packet.Type == -1 {
 			return
 		}
-		execute_command(packet, client)
+		if execute_command(packet, client) {
+			fmt.Println("CLOSING COMMAND ROUTINE")
+			return
+		}
 	}
 }
 
@@ -1156,18 +1146,14 @@ func execute_command(command_packet command_packet, client client) bool {
 	command := parse_command(command_packet)
 	fmt.Printf("system: Recieved command of type \"%d\" with %d arguments\n", command.Type, len(command.args))
 
-	active_clients_mutex.Lock()
-	previous_state := active_clients[client.Id].State
-	client.State = previous_state
-	active_clients_mutex.Unlock()
-
 	switch command.Type {
 	case HELP:
 		fmt.Println("system: Running help command")
-		client.State = help_command(client)
-		update_client_state(client, client.State)
-		return client.State == previous_state
+		help_command(client)
 	case MAIN:
+	case EXIT:
+		exit_command(client)
+		return true
 	case LOG_OUT:
 	case LIST_C:
 	case LIST_S:
@@ -1182,12 +1168,9 @@ func execute_command(command_packet command_packet, client client) bool {
 	case RM_MOD:
 	default:
 		custom_error_exit(UNKNOWN)
+		return true
 	}
-
-	// checking if the state of the client was changed
-	active_clients_mutex.Lock()
-	defer active_clients_mutex.Unlock()
-	return previous_state == client.State
+	return false
 }
 
 /*
@@ -1242,6 +1225,25 @@ func help_command(client client) int {
 	update_client_state(client, previous_state)
 	client.State = previous_state
 	return client.State
+}
+/*
+ * This function handles the client exiting
+ */
+func exit_command(client client) {
+	// udpating client status to quitting
+	update_client_state(client, QUITTING)
+	client.State = QUITTING
+
+	// informing client to send data packet to siganl main client routine to end
+	cpack := command_packet{Type: EXIT, Username: client.Account_info.Username, Arguments: []byte("READY")}
+	send_command_packet(cpack, client)
+
+	// waiting for ack to then close sockets
+	cpack = read_command_packet(client)
+	if cpack.Type != EXIT || string(cpack.Arguments) != "CLOSE_SOCKETS" {
+		custom_error_exit(UNKNOWN)
+	}
+	sub_client(client)
 }
 
 /*
