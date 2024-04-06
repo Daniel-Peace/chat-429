@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/eiannone/keyboard"
-	"golang.org/x/crypto/ssh/terminal" // Import the terminal package
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // server information
@@ -32,56 +32,44 @@ const (
 	MAX_PACKET_SIZE = 1024
 )
 
-// ansi colors constants
+// ansi text styles
 const (
-	Reset 	= "\033[0m"
-	Green 	= "\033[32m"
-	Yellow 	= "\033[33m"
+	RED 		= "\x1b[31m"
+    GREEN 		= "\x1b[32m"
+    YELLOW 		= "\x1b[33m"
+    BLUE		= "\x1b[34m"
+    MAGENTA 	= "\x1b[35m"
+	CYAN		= "\x1b[36m"
+   	WHTIE		= "\x1b[37m"
+	RESET 		= "\x1b[0m"
+    BOLD		= "\x1b[1m"
+    FAINT 		= "\x1b[2m"
+    ITALIC 		= "\x1b[3m"
+    UNDERLINE	= "\x1b[4m"
+    INVERSE 	= "\x1b[7m"
+    CROSSED_OUT = "\x1b[9m"
 )
 
 // client states
 const (
-	CHOOSING_SIGN_IN_OPT = iota	// selecting to log in register or exit
-	REGISTERING           		// registing account
+	CHOOSING_SIGN_IN_OPT = iota // selecting to log in register or exit
+	REGISTERING                 // registing account
 	LOGGING_IN                  // logging in to existing account
 	MESSAGING                   // messaging group chat
-	QUITTING                    // quitting application  
-	IN_HELP_SCREEN              // using the help command
+	QUITTING                    // quitting application
+	IN_MAIN_MENU                // using the help command
 )
 
 // packet types
 const (
-	ACCEPT = iota
-	DENY
-	MESSAGE
-	REGISTRATION
-	QUIT
-	LOGIN
-	CHOOSE_SIGN_IN_OPT
-	CHAT_STATUS_MSG
-	COMMAND
-	CONNECT
-	CLOSE
-)
-
-// commands type
-const (
-	DNE = iota // This an invalid command
-	HELP
-	MAIN
-	LOG_OUT
-	LIST_C
-	LIST_S
-	DISCONNECT_C
-	DISCONNECT_S
-	BAN_C
-	BAN_S
-	CREATE
-	DELETE
-	CHANGE_TOPIC
-	ADD_MOD
-	RM_MOD
-	EXIT
+	ACCEPT          = iota // 0	Used to indicate a name or password was accepted
+	DENY                   // 1	Used to indicate a name or password was denied
+	MESSAGE                // 2	Used to send a standard message to a channel
+	CHAT_STATUS_MSG        // 3 Used to send a joining or leaving message to a chat
+	REGISTRATION           // 4	Used to send a username or password for registering a user
+	LOGIN                  // 5	Used to send a username or password for loggin in
+	MENU_OPTION            // 6	Used to send menu options
+	CLOSE                  // 7 Used to close a function if the state changes of the client
 )
 
 // roles for the client
@@ -119,30 +107,59 @@ var horizontal_line []byte
 var vertical_space []byte
 var command_socket net.Conn
 var data_socket net.Conn
+var current_channel []byte
 
 var (
 	chat_strand []packet
 	mutex_chat  sync.Mutex
 )
 
+// commands types
+const (
+	// public commands
+	DNE     = iota // command does not exist
+	HELP           // brings up help menu
+	EXIT           // disconnects the client from a server
+	MAIN           // takes you to the main menu
+	LOG_OUT        // logs a user out and brings them to the sign in menu
+	LIST_C         // lists all users in a channel
+	LIST_S         // lists all users on the server
+
+	// moderator commands
+	DISCONNECT_C // disconnects a user from a channel
+	DISCONNECT_S // disconnects a user from the server
+	BAN_C        // bans a user from a channel
+	BAN_S        // bans a user from the server
+	CREATE       // creates a channel
+	DELETE       // deletes a channel
+	CHANGE_TOPIC // changes topic of a channel
+
+	// admin commands
+	ADD_MOD // gives user the moderator role
+	RM_MOD  // removes the moderator role from a user
+
+	// system
+	CONNECT	// used to establish data socket connection
+)
+
 // this creates a mapping of the strings on the
 // left to the integers on the right
 var command_to_int = map[string]int{
 	"/help":         1,
-	"/main":         2,
-	"/log-out":      3,
-	"/list-c":       4,
-	"/list-s":       5,
-	"/disconnect-c": 6,
-	"/disconnect-s": 7,
-	"/ban-c":        8,
-	"/ban-s":        9,
-	"/create":       10,
-	"/delete":       11,
-	"/change-topic": 12,
-	"/add-mod":      13,
-	"/rm-mod":       14,
-	"/exit":		 15,
+	"/exit":         2,
+	"/main":     	 3,
+	"/log_out":      4,
+	"/list-c":       5,
+	"/list-s":		 6,
+	"/disconnect-c": 7,
+	"/disconnect-s": 8,
+	"/ban-c":        9,
+	"/ban-s":        10,
+	"/create":       11,
+	"/delete": 		 12,
+	"/change-topic": 13,
+	"/add-mod":      14,
+	"/rm-mod":		 15,
 }
 
 // --------------------------------------------------------------------------------------------------------
@@ -165,6 +182,8 @@ func main() {
 			register_user()
 		case MESSAGING:
 			message()
+		case IN_MAIN_MENU:
+			main_menu()
 		}
 	}
 }
@@ -185,6 +204,8 @@ func initialize_client() {
 	setup_signal_handler()
 	print_client_status()
 	print_splash_screen()
+
+	fmt.Println("Made it here")
 }
 
 /*
@@ -470,7 +491,6 @@ func unmarshal_command_packet(json_data []byte) command_packet {
  */ 
 func shutdown() {
 	fmt.Println("system: Shutting down...")
-	time.Sleep(2 * time.Second)
 	command_socket.Close()
 	data_socket.Close()
 	os.Exit(0)
@@ -524,12 +544,12 @@ func shutdown() {
 			// setting state based on choice and preparing
 			// packet to be sent to the server with the choice
 			if current_choice == 0 {
-				packet.Type = CHOOSE_SIGN_IN_OPT
+				packet.Type = MENU_OPTION
 				packet.Data = []byte("login")
 				client_status = LOGGING_IN
 				send_data_packet(packet)
 			} else if current_choice == 1 {
-				packet.Type = CHOOSE_SIGN_IN_OPT
+				packet.Type = MENU_OPTION
 				packet.Data = []byte("register")
 				client_status = REGISTERING
 				send_data_packet(packet)
@@ -764,8 +784,9 @@ func exit_command(cpack command_packet) {
 
 	cpack.Type = EXIT
 	cpack.Username = username
-	cpack.Arguments = []byte("CLOSE_SOCKETS")
+	cpack.Arguments = []byte("CLOSE_SENT")
 	send_command_packet(cpack)
+	cpack = read_command_packet()
 	shutdown()
 }
 
@@ -903,7 +924,7 @@ func display_admin_commands() {
  * it that the client is disconnecting
  */
 func disconnect_from_server() {
-	packet := packet{Type: QUIT, Data: []byte("Error with client")}
+	packet := packet{Type: DENY, Data: []byte("Error with client")}
 	send_data_packet(packet)
 	command_socket.Close()
 	data_socket.Close()
@@ -941,7 +962,7 @@ func disconnect_from_server() {
 	// looping until user either picks a valid username or exits
 	var input string
 	for {
-		arrow := Green + "-> " + Reset
+		arrow := GREEN + "-> " + RESET
 		fmt.Print(arrow)
 
 		// getting input from user
@@ -1015,7 +1036,7 @@ func disconnect_from_server() {
 	// looping until user enters a valid password or exits
 	var input string
 	for {
-		arrow := Green + "-> " + Reset
+		arrow := GREEN + "-> " + RESET
 		fmt.Print(arrow)
 
 		// getting input from user
@@ -1056,7 +1077,7 @@ func disconnect_from_server() {
 		} else if packet.Type == ACCEPT {
 			fmt.Printf("system: %s\n", string(packet.Data))
 			fmt.Println(string(horizontal_line))
-			client_status = MESSAGING
+			client_status = IN_MAIN_MENU
 			break
 		}
 	}
@@ -1081,7 +1102,7 @@ func disconnect_from_server() {
 
 	// looping until user enters a valid username or exits
 	for {
-		arrow := Green + "-> " + Reset
+		arrow := GREEN + "-> " + RESET
 		fmt.Print(arrow)
 
 		// getting user input
@@ -1135,7 +1156,7 @@ func disconnect_from_server() {
 
 	// looping until user enters valid password or exits
 	for {
-		arrow := Green + "-> " + Reset
+		arrow := GREEN + "-> " + RESET
 		fmt.Print(arrow)
 		var password string
 
@@ -1168,7 +1189,7 @@ func disconnect_from_server() {
 		if packet.Type == ACCEPT {
 			fmt.Printf("system: %s\n", string(packet.Data))
 			fmt.Println(string(horizontal_line))
-			client_status = MESSAGING
+			client_status = IN_MAIN_MENU
 			break
 		} else {
 			fmt.Printf("system: %s\n", string(packet.Data))
@@ -1177,7 +1198,7 @@ func disconnect_from_server() {
 	}
 
 	// sleeping to give user time to see message
-	time.Sleep(1500 * time.Microsecond)
+	time.Sleep(2 * time.Second)
 }
 
 /*
@@ -1270,7 +1291,7 @@ func disconnect_from_server() {
 
 	// declaring and initializing packet
 	var packet packet
-	packet.Type = QUIT
+	packet.Type = EXIT
 
 	// sending quit packet to server
 	send_data_packet(packet)
@@ -1304,7 +1325,7 @@ func print_chat_strand() {
 	// forcing text box to bottom of screen
 	fmt.Print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
 	fmt.Println(string(horizontal_line))
-	start_of_chat_banner := "This is the beggining of the COMP 429 group chat"
+	start_of_chat_banner := "This is the beggining of the "+ string(current_channel) +" group chat"
 	fmt.Printf("%*s\n", ((terminal_width-len(start_of_chat_banner))/2)+len(start_of_chat_banner), start_of_chat_banner)
 	fmt.Print("\n\n")
 
@@ -1314,7 +1335,7 @@ func print_chat_strand() {
 		if chat_strand != nil {
 
 			if packet.Type == CHAT_STATUS_MSG {
-				status_message := Yellow + string(packet.Data) + Reset
+				status_message := YELLOW + string(packet.Data) + RESET
 				fmt.Println(status_message)
 				continue
 			}
@@ -1322,7 +1343,7 @@ func print_chat_strand() {
 			// checking if its a message the client sent
 			if packet.Username == username {
 				// creating header for message
-				username := Green + "You" + Reset + ": "
+				username := GREEN + "You" + RESET + ": "
 
 				// creating buffer with padding
 				username_buffer := make([]byte, 27)
@@ -1400,7 +1421,7 @@ func print_chat_strand() {
 				fmt.Printf("%*s\n", terminal_width, "|__________________________")
 			} else {
 				// creating header for message
-				username_header := Green + "\n" + packet.Username + Reset + ": "
+				username_header := GREEN + "\n" + packet.Username + RESET + ": "
 
 				// printing header
 				fmt.Println(username_header)
@@ -1470,26 +1491,8 @@ func print_chat_strand() {
 	// checking if there are messages in the strand
 	fmt.Print("\n\n\n")
 	fmt.Println(string(horizontal_line))
-	arrow := Green + "-> " + Reset
+	arrow := GREEN + "-> " + RESET
 	fmt.Print(arrow)
-}
-
-// sends quit message to server
-func send_quit_packet() {
-	var packet packet
-	packet.Type = QUIT
-
-	send_data_packet(packet)
-}
-
-// checks if user entered /exit
-func check_and_quit(input string) bool {
-	if input == "/exit" {
-		send_quit_packet()
-		client_status = QUITTING
-		return true
-	}
-	return false
 }
 
 /*
@@ -1510,3 +1513,181 @@ func check_and_quit(input string) bool {
 }
 
 // --------------------------------------------------------------------------------------------------------------
+
+func main_menu() {
+	// clearing terminal
+	clear_terminal()
+
+	// informting server that the client is ready
+	data_packet := packet{Type: MAIN, Username: username, Data: []byte("READY")}
+	send_data_packet(data_packet)
+
+	// getting list of channels from the server
+	data_packet = read_data_packet()
+
+	// varifying packet
+	if data_packet.Type != MAIN {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	// parsing the choice into an array of strings
+	channels := strings.Split(string(data_packet.Data), " ")
+
+	// appending QUIT option to menu
+	channels = append(channels, "QUIT")
+
+	// creating channel to send client choice
+	choice_channel := make(chan int)
+
+	// creating go routine to handle displaying the menu
+	go display_main_menu(choice_channel, channels)
+
+	// creating a keyboard reader
+	if err := keyboard.Open(); err != nil {
+		panic(err)
+	}
+	defer keyboard.Close()
+
+	// holds the users current choice
+	current_choice := 0
+
+	// looping until a user makes a selection
+	for {
+		// getting key press
+		_, key, err := keyboard.GetSingleKey()
+		if err != nil {
+			panic(err)
+		}
+
+		// Check if the pressed key is the up or down arrow
+		if key == keyboard.KeyArrowUp {
+			current_choice += len(channels) - 1
+			current_choice = current_choice % len(channels)
+			choice_channel <- current_choice
+		} else if key == keyboard.KeyArrowDown {
+			current_choice++
+			current_choice = current_choice % len(channels)
+			choice_channel <- current_choice
+		}
+
+		// Break the loop if Enter key is pressed
+		if key == keyboard.KeyEnter {
+			// send signal to display_sign_in_menu
+			choice_channel <- -1
+			if current_choice != len(channels)-1 {
+				var packet packet
+				packet.Type = MENU_OPTION
+				packet.Data = []byte(channels[current_choice])
+				current_channel = []byte(channels[current_choice])
+				client_status = MESSAGING
+				send_data_packet(packet)
+			} else {
+				var cpack command_packet
+				cpack.Type = EXIT
+				cpack.Username = ""
+				cpack.Arguments = []byte("client disconnecting")
+				client_status = QUITTING
+				exit_command(cpack)
+			}
+			break
+		}
+	}
+}
+
+/*
+ * This function is called as a go routine to display the sign in options
+ */
+func display_main_menu(choice chan int, channels []string) {
+	currently_selected := 0
+	loop_iteration := 0
+	for {
+		select {
+		case c := <-choice:
+			currently_selected = c
+			if currently_selected == -1 {
+				return
+			}
+
+			if loop_iteration == 16 {
+				loop_iteration = 0
+			} else if loop_iteration < 8 {
+				print_main_menu_with_choice(currently_selected, channels)
+				loop_iteration++
+			} else if loop_iteration < 16 {
+				print_main_menu_without_choice(channels)
+				loop_iteration++
+			}
+			time.Sleep(30 * time.Millisecond)
+		default:
+			if currently_selected == -1 {
+				return
+			}
+
+			if loop_iteration == 16 {
+				loop_iteration = 0
+			} else if loop_iteration < 8 {
+				print_main_menu_with_choice(currently_selected, channels)
+				loop_iteration++
+			} else if loop_iteration < 16 {
+				print_main_menu_without_choice(channels)
+				loop_iteration++
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+}
+
+/*
+ * This function prints a screen with the login option selected
+ */
+func print_main_menu_with_choice(choice int, channels []string) {
+	clear_terminal()
+	fmt.Println(string(horizontal_line))
+	line_1 := "Select a channel from the list below to join"
+	fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+	line_2 := "Use the up and down arrows to change selection"
+	fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+	fmt.Println(string(horizontal_line))
+	fmt.Print("\n\n\n\n\n\n")
+	for i := 0; i < len(channels); i++ {
+		var msg string
+		if i == choice {
+			if i != len(channels) - 1{
+				msg = "--> #" + channels[i] + " <--"
+			} else {
+				msg = "--> " + channels[i] + " <--"
+			}
+			
+		} else if i != len(channels) - 1{
+			msg = "#" + channels[i]
+		} else {
+			msg = channels[i]
+		}
+		fmt.Printf("%*s\n", ((terminal_width-len(msg))/2)+len(msg), msg)
+		fmt.Print("\n")
+	}
+}
+
+/*
+ * This function prints a screen with the login option selected
+ */
+ func print_main_menu_without_choice(channels []string) {
+	clear_terminal()
+	fmt.Println(string(horizontal_line))
+	line_1 := "Select a channel from the list below to join"
+	fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+	line_2 := "Use the up and down arrows to change selection"
+	fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+	fmt.Println(string(horizontal_line))
+	fmt.Print("\n\n\n\n\n\n")
+	for i := 0; i < len(channels); i++ {
+		var msg string
+		if i != len(channels) - 1{
+			msg = "#" + channels[i]
+		} else {
+			msg = channels[i]
+		}
+		fmt.Printf("%*s\n", ((terminal_width-len(msg))/2)+len(msg), msg)
+		fmt.Print("\n")
+	}
+}
