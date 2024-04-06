@@ -29,8 +29,25 @@ const (
 	// other
 	MAX_CLIENTS     = 20
 	MAX_PACKET_SIZE = 1024
-	MAX_DATA_SIZE   = 512
 	MAX_CHANNELS 	= 10
+)
+
+// ansi text styles
+const (
+	RED 		= "\x1b[31m"
+    GREEN 		= "\x1b[32m"
+    YELLOW 		= "\x1b[33m"
+    BLUE		= "\x1b[34m"
+    MAGENTA 	= "\x1b[35m"
+	CYAN		= "\x1b[36m"
+   	WHTIE		= "\x1b[37m"
+	RESET 		= "\x1b[0m"
+    BOLD		= "\x1b[1m"
+    FAINT 		= "\x1b[2m"
+    ITALIC 		= "\x1b[3m"
+    UNDERLINE	= "\x1b[4m"
+    INVERSE 	= "\x1b[7m"
+    CROSSED_OUT = "\x1b[9m"
 )
 
 // commands types
@@ -96,24 +113,6 @@ const (
 	OUT_OF_SYNC     = iota // 0		packet type does not match expeceted type
 	UNEXPECTED_DATA        // 1		data in packet does not match expected
 	UNKNOWN                // 2		unknown error occured
-)
-
-// ansi text styles
-const (
-	RED 		= "\x1b[31m"
-    GREEN 		= "\x1b[32m"
-    YELLOW 		= "\x1b[33m"
-    BLUE		= "\x1b[34m"
-    MAGENTA 	= "\x1b[35m"
-	CYAN		= "\x1b[36m"
-   	WHTIE		= "\x1b[37m"
-	RESET 		= "\x1b[0m"
-    BOLD		= "\x1b[1m"
-    FAINT 		= "\x1b[2m"
-    ITALIC 		= "\x1b[3m"
-    UNDERLINE	= "\x1b[4m"
-    INVERSE 	= "\x1b[7m"
-    CROSSED_OUT = "\x1b[9m"
 )
 
 // ---------------------------------------------------------------------------------------------------
@@ -905,7 +904,7 @@ func login(client Client) {
 		// checking if password matches account password
 		if string(packet.Data) == registered_accounts[index].Password {
 			packet.Type = ACCEPT
-			packet.Data = []byte("successfully logged in")
+			packet.Data = []byte("Success!")
 			send_data_packet(packet, client)
 			active_clients_mutex.Lock()
 			active_clients[client.Id].State = IN_MAIN_MENU
