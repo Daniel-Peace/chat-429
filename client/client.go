@@ -741,6 +741,10 @@ func handle_command(input string) []byte {
 		return exit_command(packet)
 	case CREATE:
 		return create_command(packet)
+	case MAIN:
+		return main_command(packet)
+	case CHANGE_TOPIC:
+		change_topic_command(packet)
 	}
 	return nil
 }
@@ -867,6 +871,58 @@ func create_command(cpack Command_packet) []byte {
 	if cpack.Type != CREATE {
 		custom_error_exit(OUT_OF_SYNC)
 	}
+	return cpack.Arguments
+}
+/*
+ * This function handles the main command
+ */
+func main_command(cpack Command_packet) []byte {
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	} else if client_status == IN_MAIN_MENU {
+		return []byte("You are already in the main menu")
+	}
+
+	// send server the command
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != MAIN {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	if string(cpack.Arguments) != "Success" {
+		custom_error_exit(UNEXPECTED_DATA)
+	}
+
+	fmt.Println("updating status")
+	client_status = IN_MAIN_MENU
+	dpack := Data_packet{Type: CLOSE, Username: username, Data: []byte("State changed")}
+	send_data_packet(dpack)
+
+	chat_strand = nil
+	
+	return cpack.Arguments
+}
+
+/*
+ * This function handles the change_topic command
+ */
+func change_topic_command(cpack Command_packet) []byte {
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// sending command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != CHANGE_TOPIC {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
 	return cpack.Arguments
 }
 
@@ -1457,10 +1513,15 @@ func message() {
 		// checks if a command was entered and executes it if it was
 		if is_comand(input) {
 			handle_command(input)
+			if client_status != MESSAGING {
+				fmt.Println("client state changed")
+				return
+			}
 			clear_terminal()
 			print_chat_strand()
 			continue
 		}
+		
 
 		// declaring and initializing packet
 		packet.Type = MESSAGE
@@ -1488,6 +1549,10 @@ func handle_inbound_msg() {
 	for {
 		// reading packet
 		packet := read_data_packet()
+
+		if packet.Type == CLOSE {
+			return
+		}
 
 		// checking packet type
 		if packet.Type == MESSAGE || packet.Type == CHAT_STATUS_MSG {
@@ -1742,6 +1807,7 @@ func custom_error_exit(err int) {
  * This function handles main menu functionality
  */
 func main_menu() {
+	fmt.Println("Made it to main menu")
 	// clearing terminal
 	clear_terminal()
 

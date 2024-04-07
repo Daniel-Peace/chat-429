@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // ---------------------------------------------------------------------------------------------------
@@ -940,6 +941,7 @@ func message(client Client) {
 
 		// checking if the client has changed state and this function needs to return
 		if packet.Type == CLOSE {
+			fmt.Println("closing message()")
 			return
 		}
 
@@ -952,7 +954,7 @@ func message(client Client) {
 		active_clients_mutex.Lock()
 		channels_mutex.Lock()
 		for _, user := range channels[client.Current_channel].Users {
-			if user != client.Id && active_clients[user].State == MESSAGING {
+			if user != client.Id {
 				send_data_packet(packet, *active_clients[user])
 			}
 		}
@@ -1240,6 +1242,7 @@ func execute_command(command_packet Command_packet, client Client) bool {
 		fmt.Println("system: Running help command")
 		help_command(client)
 	case MAIN:
+		main_command(client)
 	case EXIT:
 		fmt.Println("system: Running exit command")
 		exit_command(client)
@@ -1256,6 +1259,7 @@ func execute_command(command_packet Command_packet, client Client) bool {
 		create_command(client, command)
 	case DELETE:
 	case CHANGE_TOPIC:
+		change_topic_command(client, command)
 	case ADD_MOD:
 	case RM_MOD:
 	default:
@@ -1367,6 +1371,46 @@ func create_command(client Client, command Parsed_command) {
 	send_command_packet(cpack, client)
 }
 
+func main_command(client Client) {
+	var cpack Command_packet
+	cpack.Type = MAIN
+	cpack.Username = client.Account_info.Username
+
+	if leave_channel(client) {
+		update_client_state(client, IN_MAIN_MENU)
+		dpack := Data_packet{Type: CLOSE, Username: client.Account_info.Username, Data: []byte("Going to main menu")}
+		send_data_packet(dpack, client)
+		cpack.Arguments = []byte("Success")
+		send_command_packet(cpack, client)
+	} else {
+		cpack.Arguments = []byte("Failed to leave channel")
+		send_command_packet(cpack, client)
+	}
+}
+
+func change_topic_command(client Client, command Parsed_command) {
+	// updating client struct
+	client = update_client(client)
+
+	var cpack Command_packet
+	cpack.Type = CHANGE_TOPIC
+	cpack.Username = client.Account_info.Username
+
+	if len(command.Args) < 1 {
+		cpack.Arguments = []byte("No topic name given")
+	} else if len(command.Args) > 1 {
+		cpack.Arguments = []byte("Too many arguments")
+	} else {
+		channels_mutex.Lock()
+		defer channels_mutex.Unlock()
+
+		channels[client.Current_channel].Topic = []byte(command.Args[0])
+		cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[0])
+	}
+
+	send_command_packet(cpack, client)
+}
+
 /*
  * This function prints data packets
  */
@@ -1436,6 +1480,7 @@ func find_free_channel_slot() int {
  * This funtion handles the functionality of the main menu
  */
 func main_menu(client Client) {
+	fmt.Println("Made it to main menu")
 	// reading packet from client
 	data_packet := read_data_packet(client)
 
@@ -1511,4 +1556,39 @@ func update_client(client Client) Client {
 	active_clients_mutex.Lock()
 	defer active_clients_mutex.Unlock()
 	return *active_clients[client.Id]
+}
+
+func leave_channel(client Client) bool {
+	client = update_client(client)
+	channels_mutex.Lock()
+	defer channels_mutex.Unlock()
+
+	for index, user := range channels[client.Current_channel].Users {
+		if user == client.Id {
+			
+			active_clients_mutex.Lock()
+			msg := "\n" + client.Account_info.Username + " has left the chat\n" + time.Now().Format("3:04 PM") + "\n"
+			packet := Data_packet{Type: CHAT_STATUS_MSG, Data: []byte(msg)}
+			for _, user := range channels[client.Current_channel].Users {
+				if user != client.Id {
+					send_data_packet(packet, *active_clients[user])
+				}
+			}
+			active_clients_mutex.Unlock()
+
+			if index + 1 == len(channels[client.Current_channel].Users) {
+				if len(channels[client.Current_channel].Users) == 0 {
+					channels[client.Current_channel].Users = nil
+				} else {
+					channels[client.Current_channel].Users = channels[client.Current_channel].Users[:len(channels[client.Current_channel].Users) - 1]
+				}
+				return true
+			} else {
+				channels[client.Current_channel].Users = append(channels[client.Current_channel].Users[:index], channels[client.Current_channel].Users[index +1:]...)
+				return true
+			}
+
+		}
+	}
+	return false
 }
