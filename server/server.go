@@ -8,8 +8,8 @@ import (
 	"io/fs"
 	"net"
 	"os"
-	"os/signal"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,25 +29,25 @@ const (
 	// other
 	MAX_CLIENTS     = 20
 	MAX_PACKET_SIZE = 1024
-	MAX_CHANNELS 	= 10
+	MAX_CHANNELS    = 10
 )
 
 // ansi text styles
 const (
-	RED 		= "\x1b[31m"
-    GREEN 		= "\x1b[32m"
-    YELLOW 		= "\x1b[33m"
-    BLUE		= "\x1b[34m"
-    MAGENTA 	= "\x1b[35m"
-	CYAN		= "\x1b[36m"
-   	WHTIE		= "\x1b[37m"
-	RESET 		= "\x1b[0m"
-    BOLD		= "\x1b[1m"
-    FAINT 		= "\x1b[2m"
-    ITALIC 		= "\x1b[3m"
-    UNDERLINE	= "\x1b[4m"
-    INVERSE 	= "\x1b[7m"
-    CROSSED_OUT = "\x1b[9m"
+	RED         = "\x1b[31m"
+	GREEN       = "\x1b[32m"
+	YELLOW      = "\x1b[33m"
+	BLUE        = "\x1b[34m"
+	MAGENTA     = "\x1b[35m"
+	CYAN        = "\x1b[36m"
+	WHTIE       = "\x1b[37m"
+	RESET       = "\x1b[0m"
+	BOLD        = "\x1b[1m"
+	FAINT       = "\x1b[2m"
+	ITALIC      = "\x1b[3m"
+	UNDERLINE   = "\x1b[4m"
+	INVERSE     = "\x1b[7m"
+	CROSSED_OUT = "\x1b[9m"
 )
 
 // commands types
@@ -75,7 +75,7 @@ const (
 	RM_MOD  // removes the moderator role from a user
 
 	// system
-	CONNECT	// used to establish data socket connection
+	CONNECT // used to establish data socket connection
 )
 
 // client states
@@ -86,7 +86,7 @@ const (
 	MESSAGING                   // messaging group chat
 	QUITTING                    // quitting application
 	IN_HELP_SCREEN              // using the help command
-	IN_MAIN_MENU				// in main menu
+	IN_MAIN_MENU                // in main menu
 )
 
 // packet types
@@ -126,12 +126,12 @@ type Account_info struct {
 
 // struct for holding client data
 type Client struct {
-	Account_info 	Account_info
-	Id           	int
-	data_sock    	net.Conn
-	command_sock 	net.Conn
-	State        	int
-	Logged_in   	bool
+	Account_info    Account_info
+	Id              int
+	data_sock       net.Conn
+	command_sock    net.Conn
+	State           int
+	Logged_in       bool
 	Current_channel int
 }
 
@@ -157,9 +157,9 @@ type Parsed_command struct {
 }
 
 type Channel struct {
-	Id	int
-	Topic	[]byte
-	Users	[]int	
+	Id    int
+	Topic []byte
+	Users []int
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -167,20 +167,20 @@ type Channel struct {
 // global variables
 var (
 	// creating array of client structs
-	active_clients       		[]*Client
-	active_clients_mutex 		sync.Mutex
+	active_clients       []*Client
+	active_clients_mutex sync.Mutex
 
 	// creating array of chennels structs
-	channels       				[]*Channel
-	channels_mutex		 		sync.Mutex
+	channels       []*Channel
+	channels_mutex sync.Mutex
 
 	// counter for tracking the number of clients connected to the server
 	num_of_active_clients       int
 	num_of_active_clients_mutex sync.Mutex
 
 	// array that holds registered accounts
-	registered_accounts       	[]Account_info
-	registered_accounts_mutex 	sync.Mutex
+	registered_accounts       []Account_info
+	registered_accounts_mutex sync.Mutex
 
 	// passive socket for accepting clients
 	accept_socket net.Listener
@@ -258,9 +258,9 @@ func init_channels() {
 
 	for index := 0; index < MAX_CHANNELS; index++ {
 		if index == 0 {
-			channels[index] = &Channel{Id:  index, Topic: []byte("nonsense"), Users: nil}
+			channels[index] = &Channel{Id: index, Topic: []byte("nonsense"), Users: nil}
 		} else {
-			channels[index] = &Channel{Id:  -1, Topic: []byte(""), Users: nil}
+			channels[index] = &Channel{Id: -1, Topic: []byte(""), Users: nil}
 		}
 	}
 }
@@ -278,12 +278,12 @@ func init_active_clients() {
 	// initializing each client in the array
 	for index := range active_clients {
 		active_clients[index] = &Client{
-			Account_info: Account_info{Username: "", Password: "", Role: 0},
-			Id:           -1,
-			data_sock:    nil,
-			command_sock: nil,
-			State:        CHOOSING_SIGN_IN_OPT,
-			Logged_in:    false,
+			Account_info:    Account_info{Username: "", Password: "", Role: 0},
+			Id:              -1,
+			data_sock:       nil,
+			command_sock:    nil,
+			State:           CHOOSING_SIGN_IN_OPT,
+			Logged_in:       false,
 			Current_channel: -1,
 		}
 	}
@@ -857,6 +857,12 @@ func login(client Client) {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
+		active_clients_mutex.Lock()
+		for _, user := range active_clients {
+			fmt.Printf("Account username: %s\n Account status: %t\n", user.Account_info.Username, user.Logged_in)
+		}
+		active_clients_mutex.Unlock()
+
 		// checking if an account exists with the given username
 		index, exists = name_is_exists(string(packet.Data))
 
@@ -869,7 +875,7 @@ func login(client Client) {
 		}
 
 		// checking if the account is already logged in
-		if exists && is_logged_in(index) {
+		if exists && is_logged_in(string(packet.Data)) {
 			packet.Type = DENY
 			packet.Data = []byte("This account is already logged in somewhere")
 			send_data_packet(packet, client)
@@ -942,10 +948,6 @@ func message(client Client) {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
-		for i := 0; i < MAX_CLIENTS; i++ {
-			fmt.Printf("client #%d: %d\n", i, active_clients[i].State)
-		}
-
 		// sending message to everyone in the default chat
 		active_clients_mutex.Lock()
 		channels_mutex.Lock()
@@ -970,6 +972,7 @@ func name_is_exists(username string) (int, bool) {
 	for index, current_account := range registered_accounts {
 		// checking if username exists
 		if current_account.Username == username {
+			fmt.Printf("index of account: %d\n", index)
 			return index, true
 		}
 	}
@@ -1044,10 +1047,16 @@ func decrement_num_of_active_clients() {
  * this function checks if an account is logged in
  * It returns true if an account is indeed logged in
  */
-func is_logged_in(index int) bool {
+func is_logged_in(username string) bool {
 	active_clients_mutex.Lock()
 	defer active_clients_mutex.Unlock()
-	return active_clients[index].Logged_in
+	for _, user := range active_clients {
+		if user.Account_info.Username == username {
+			return true
+		}	
+		
+	}
+	return false
 }
 
 /*
@@ -1232,6 +1241,7 @@ func execute_command(command_packet Command_packet, client Client) bool {
 		help_command(client)
 	case MAIN:
 	case EXIT:
+		fmt.Println("system: Running exit command")
 		exit_command(client)
 		return true
 	case LOG_OUT:
@@ -1242,6 +1252,8 @@ func execute_command(command_packet Command_packet, client Client) bool {
 	case BAN_C:
 	case BAN_S:
 	case CREATE:
+		fmt.Println("system: Running create command")
+		create_command(client, command)
 	case DELETE:
 	case CHANGE_TOPIC:
 	case ADD_MOD:
@@ -1268,7 +1280,7 @@ func parse_command(command_packet Command_packet) Parsed_command {
 	// checking if the command had arguments
 	if len(args) > 0 {
 		// adding the arguments to the struct
-		for i := 1; i < len(args); i++ {
+		for i := 0; i < len(args); i++ {
 			command.Args = append(command.Args, args[i])
 		}
 	} else {
@@ -1282,7 +1294,7 @@ func parse_command(command_packet Command_packet) Parsed_command {
 /*
  * This function is executes the help command
  */
-func help_command(client Client) int {
+func help_command(client Client) {
 	// saving current state and then setting state to IN_HELP_SCREEN
 	previous_state := client.State
 	update_client_state(client, IN_HELP_SCREEN)
@@ -1304,7 +1316,6 @@ func help_command(client Client) int {
 	// restoring state prior to command
 	update_client_state(client, previous_state)
 	client.State = previous_state
-	return client.State
 }
 
 /*
@@ -1332,6 +1343,31 @@ func exit_command(client Client) {
 }
 
 /*
+ * This function handles the creat command
+ */
+func create_command(client Client, command Parsed_command) {
+	// updating client struct
+	client = update_client(client)
+
+	// creating command packet to send to client
+	var cpack Command_packet
+	cpack.Type = CREATE
+	cpack.Username = client.Account_info.Username
+
+	// checking if client is in a state to enter this command
+	if client.State == REGISTERING || client.State == LOGGING_IN || client.State == CHOOSING_SIGN_IN_OPT {
+		cpack.Arguments = []byte("Command not availbale. Must sign in first.")
+	} else if client.Account_info.Role != PUBLIC {
+		cpack.Arguments = []byte("You don't have permission to use this command")
+	} else {
+		cpack.Arguments = create_channel(command)
+	}
+
+	// sending packet
+	send_command_packet(cpack, client)
+}
+
+/*
  * This function prints data packets
  */
 func print_data_packet(packet Data_packet) {
@@ -1345,40 +1381,83 @@ func print_data_packet(packet Data_packet) {
 /*
  * This function clears the terminal
  */
- func clear_terminal() {
+func clear_terminal() {
 	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
 }
 
+/*
+ * This function creates a channel
+ */
+func create_channel(command Parsed_command) []byte {
+	// checking if the correct number of args was sent
+	if len(command.Args) < 1 {
+		return []byte("No topic name given")
+	} else if len(command.Args) > 1 {
+		return []byte("Too many arguments")
+	}
 
+	// creating channel struct
+	channel := Channel{Topic: []byte(command.Args[0]), Users: nil}
 
+	// finding free slot for channel
+	free_slot_index := find_free_channel_slot()
+	if free_slot_index == -1 {
+		custom_error_exit(UNKNOWN)
+	}
 
+	// adding channel to array
+	channels_mutex.Lock()
+	defer channels_mutex.Unlock()
+	channels[free_slot_index] = &channel
 
+	// returning success message
+	return []byte("Successfull added a channel with topic #" + command.Args[0])
+}
 
+/*
+ * This function find a free channel slot to store the new channel
+ */
+func find_free_channel_slot() int {
+	channels_mutex.Lock()
+	defer channels_mutex.Unlock()
+
+	// looping through channels array to find slot
+	for index, channel := range channels {
+		if channel.Id == -1 {
+			return index
+		}
+	}
+	return -1
+}
+
+/*
+ * This funtion handles the functionality of the main menu
+ */
 func main_menu(client Client) {
-
+	// reading packet from client
 	data_packet := read_data_packet(client)
+
+	// validating packet adn confirming client is ready
 	if data_packet.Type != MAIN || string(data_packet.Data) != "READY" {
 		custom_error_exit(OUT_OF_SYNC)
 	}
 
-	// sending chennels to client
-	fmt.Println("Here we are")
+	// sending channels to client
 	var channel_list strings.Builder
 	channels_mutex.Lock()
-	for index,channel := range channels {
+	for index, channel := range channels {
 		if channel.Id != -1 {
-			channel_list.WriteString(string(channel.Topic))
 			if index != 0 {
 				channel_list.WriteString(" ")
 			}
+			channel_list.WriteString(string(channel.Topic))
 		}
 	}
 	channels_mutex.Unlock()
 
-	fmt.Println(channel_list.String())
-
+	// preparing packet
 	data_packet = Data_packet{Type: MAIN, Username: client.Account_info.Username, Data: []byte(channel_list.String())}
 	send_data_packet(data_packet, client)
 
@@ -1395,22 +1474,40 @@ func main_menu(client Client) {
 		custom_error_exit(OUT_OF_SYNC)
 	}
 
-	user_choice,_ := strconv.Atoi(string(packet.Data))
+	// converting string to int
+	user_choice, err := strconv.Atoi(string(packet.Data))
+	if err != nil {
+		error_exit(err)
+	}
 
+	// joining a channel
 	join_channel(client, user_choice)
+
+	// updating client status
 	update_client_state(client, MESSAGING)
 }
 
+/*
+ * This function joins a specific channel
+ */
 func join_channel(client Client, channel_id int) {
 	channels_mutex.Lock()
 	defer channels_mutex.Unlock()
+
+	// adding user id to list of users in channel
 	channels[channel_id].Users = append(channels[channel_id].Users, client.Id)
+
 	active_clients_mutex.Lock()
 	defer active_clients_mutex.Unlock()
+
+	// adding channel id to client
 	active_clients[client.Id].Current_channel = channel_id
 }
 
-func update_client(client Client) Client{
+/*
+ * This function udpates a client struct
+ */
+func update_client(client Client) Client {
 	active_clients_mutex.Lock()
 	defer active_clients_mutex.Unlock()
 	return *active_clients[client.Id]

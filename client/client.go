@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -190,8 +191,6 @@ func main() {
 		}
 	}
 }
-
-// --------------------------------------------------------------------------------------------------------
 
 /*
  * This function initializes the client
@@ -731,16 +730,19 @@ func is_comand(input string) bool {
 /*
  * This function executes the command entered
  */
-func handle_command(input string) {
+func handle_command(input string) []byte {
 	// sending the command to the server
 	packet := parse_command(input)
 
 	switch packet.Type {
 	case HELP:
-		help_command(packet)
+		return help_command(packet)
 	case EXIT:
-		exit_command(packet)
+		return exit_command(packet)
+	case CREATE:
+		return create_command(packet)
 	}
+	return nil
 }
 
 /*
@@ -767,13 +769,15 @@ func parse_command(input string) Command_packet{
 	packet.Username = username
 	packet.Arguments = []byte(args.String())
 
+	fmt.Printf("command type: %s\n args: %s", tokens[0], args.String())
+
 	return packet
 }
 
 /*
  * This function handles the client exiting the application
  */
-func exit_command(cpack Command_packet) {
+func exit_command(cpack Command_packet) []byte {
 	// send command to server
 	send_command_packet(cpack)
 
@@ -783,22 +787,30 @@ func exit_command(cpack Command_packet) {
 		custom_error_exit(UNKNOWN)
 	}
 
+	// closing function on server side that is using data_socket
 	dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
 	send_data_packet(dpack)
 
+	// creating exit packet
 	cpack.Type = EXIT
 	cpack.Username = username
 	cpack.Arguments = []byte("CLOSE_SENT")
+
+	// sending packet to server
 	send_command_packet(cpack)
-	time.Sleep(2 * time.Second)
+
+	// reading from server
 	read_command_packet()
+
+	// shutting down client
 	shutdown()
+	return nil
 }
 
 /*
  * This function handles the client accessing the help menu
  */
-func help_command(cpack Command_packet) {
+func help_command(cpack Command_packet) []byte {
 	// send command to server
 	send_command_packet(cpack)
 	
@@ -840,6 +852,22 @@ func help_command(cpack Command_packet) {
 	packet.Username = username
 	packet.Arguments = []byte("DONE")
 	send_command_packet(packet)
+	return nil
+}
+
+/*
+ * This function handles the create command
+ */
+func create_command(cpack Command_packet) []byte {
+	// sending command
+	send_command_packet(cpack)
+
+	// getting repsonse from server
+	cpack = read_command_packet()
+	if cpack.Type != CREATE {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+	return cpack.Arguments
 }
 
 /*
@@ -1093,7 +1121,7 @@ func get_password_for_registration()() {
 /*
  * This function handles logging in the client
  */
- func login() {
+func login() {
 	var packet Data_packet
 	// creating byte array to hold input
 	var input []byte
@@ -1110,15 +1138,13 @@ func get_password_for_registration()() {
 			panic(err)
 		}
 
+		// getting user input
 		for {
 			// getting key press
 			char, key, err := keyboard.GetSingleKey()
 			if err != nil {
 				panic(err)
 			}
-	
-			// clearing the terminal
-			clear_terminal()
 
 			// checking if enter key was pressed
 			if key == keyboard.KeyEnter {
@@ -1139,14 +1165,19 @@ func get_password_for_registration()() {
 			} else {
 				input = append(input, byte(char))
 			}
+			// clearing the terminal
+			clear_terminal()
+
+			// printing login screen
 			print_login_username(string(input), nil)
 		}
 	
 		// checking if the user entered a command
 		if is_comand(string(input)) {
-			handle_command(string(input))
+			msg := handle_command(string(input))
+			input = nil
 			clear_terminal()
-			print_login_username(string(input), nil)
+			print_login_username(string(input), msg)
 			continue
 		}
 
@@ -1191,6 +1222,7 @@ func get_password_for_registration()() {
 			panic(err)
 		}
 
+		// getting user input
 		for {
 			// getting key press
 			char, key, err := keyboard.GetSingleKey()
@@ -1215,14 +1247,17 @@ func get_password_for_registration()() {
 			} else {
 				input = append(input, byte(char))
 			}
+
+			// print login screen
 			print_login_password(string(input), nil)
 		}
 
 		// checking if command was entered
 		if is_comand(string(input)) {
-			handle_command(string(input))
+			msg := handle_command(string(input))
+			input = nil
 			clear_terminal()
-			print_login_password(string(input), nil)
+			print_login_username(string(input), msg)
 			continue
 		}
 
@@ -1472,7 +1507,7 @@ func handle_inbound_msg() {
 /*
  * This function handles when the user presses ctrl-c
  */
- func handle_ctrl_c(sigChan chan os.Signal) {
+func handle_ctrl_c(sigChan chan os.Signal) {
 	// Wait for a SIGINT signal
 	<-sigChan
 
@@ -1497,7 +1532,7 @@ func error_exit(err error) {
 	var cpack Command_packet
 	cpack.Type = EXIT
 	cpack.Username = ""
-	cpack.Arguments = []byte("client disconnecting")
+	cpack.Arguments = []byte("Error, disconnecting")
 	client_status = QUITTING
 	exit_command(cpack)
 }
@@ -1698,7 +1733,7 @@ func custom_error_exit(err int) {
 	var cpack Command_packet
 	cpack.Type = EXIT
 	cpack.Username = ""
-	cpack.Arguments = []byte("client disconnecting")
+	cpack.Arguments = []byte("Error, disconnecting")
 	client_status = QUITTING
 	exit_command(cpack)
 }
@@ -1769,7 +1804,7 @@ func main_menu() {
 			if current_choice != len(channels)-1 {
 				var packet Data_packet
 				packet.Type = MENU_OPTION
-				packet.Data = []byte(channels[current_choice])
+				packet.Data = []byte(strconv.Itoa(current_choice))
 				current_channel = []byte(channels[current_choice])
 				client_status = MESSAGING
 				send_data_packet(packet)
