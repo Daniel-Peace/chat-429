@@ -304,6 +304,11 @@ func load_accounts() {
 	if json_files == nil {
 		return
 	}
+	admin_account := Account_info{Username: "Admin", Password: "gochat", Role: ADMIN}
+	registered_accounts_mutex.Lock()
+	defer registered_accounts_mutex.Unlock()
+	registered_accounts = append(registered_accounts, admin_account)
+	
 
 	// looping through files in folder
 	for _, current_file := range json_files {
@@ -489,7 +494,10 @@ func accept_client(server net.Listener) net.Conn {
  * This function write all of the accounts current in the accounts array to a json file
  */
 func write_accounts_to_json() {
-	for _, account := range registered_accounts {
+	for index, account := range registered_accounts {
+		if index == 0 {
+			continue
+		}
 
 		// marshaling data
 		json_data, err := json.Marshal(account)
@@ -746,10 +754,7 @@ func register_client(client Client) {
 		// checking if username was valid
 		if is_valid {
 			active_clients_mutex.Lock()
-			defer active_clients_mutex.Unlock()
-
 			registered_accounts_mutex.Lock()
-			defer registered_accounts_mutex.Unlock()
 
 			// updating info in active clients list
 			active_clients[client.Id].Account_info.Password = password
@@ -758,6 +763,11 @@ func register_client(client Client) {
 			// adding account to list of accounts
 			tempAccount := Account_info{Username: username, Password: password}
 			registered_accounts = append(registered_accounts, tempAccount)
+
+			registered_accounts_mutex.Unlock()
+			active_clients_mutex.Unlock()
+
+			save_accounts()
 
 			break
 		}
@@ -909,6 +919,7 @@ func login(client Client) {
 		}
 
 		// checking if password matches account password
+		registered_accounts_mutex.Lock()
 		if string(packet.Data) == registered_accounts[index].Password {
 			packet.Type = ACCEPT
 			packet.Data = []byte("Success!")
@@ -917,7 +928,9 @@ func login(client Client) {
 			active_clients[client.Id].State = IN_MAIN_MENU
 			active_clients[client.Id].Account_info.Password = string(packet.Data)
 			active_clients[client.Id].Logged_in = true
+			active_clients[client.Id].Account_info.Role = registered_accounts[index].Role
 			active_clients_mutex.Unlock()
+			registered_accounts_mutex.Unlock()
 			return
 		} else {
 			packet.Type = DENY
@@ -1300,6 +1313,7 @@ func parse_command(command_packet Command_packet) Parsed_command {
  */
 func help_command(client Client) {
 	// saving current state and then setting state to IN_HELP_SCREEN
+	client = update_client(client)
 	previous_state := client.State
 	update_client_state(client, IN_HELP_SCREEN)
 	client.State = IN_HELP_SCREEN
@@ -1396,18 +1410,22 @@ func change_topic_command(client Client, command Parsed_command) {
 	cpack.Type = CHANGE_TOPIC
 	cpack.Username = client.Account_info.Username
 
-	if len(command.Args) < 1 {
-		cpack.Arguments = []byte("No topic name given")
-	} else if len(command.Args) > 1 {
+	if len(command.Args) < 2 {
+		cpack.Arguments = []byte("Not enough arguments")
+	} else if len(command.Args) > 2 {
 		cpack.Arguments = []byte("Too many arguments")
 	} else {
+		index := get_channel_id([]byte(command.Args[0]))
+
 		channels_mutex.Lock()
 		defer channels_mutex.Unlock()
-
-		channels[client.Current_channel].Topic = []byte(command.Args[0])
-		cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[0])
+		if index == -1 {
+			cpack.Arguments = []byte("No chat found with the name \"" + string(command.Args[1]) + "\"")
+		} else {
+			channels[index].Topic = []byte(command.Args[1])
+			cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[0])
+		}
 	}
-
 	send_command_packet(cpack, client)
 }
 
@@ -1543,10 +1561,11 @@ func join_channel(client Client, channel_id int) {
 	channels[channel_id].Users = append(channels[channel_id].Users, client.Id)
 
 	active_clients_mutex.Lock()
-	defer active_clients_mutex.Unlock()
-
-	// adding channel id to client
 	active_clients[client.Id].Current_channel = channel_id
+	client.Current_channel = channel_id
+	active_clients_mutex.Unlock()
+	msg := "\n" + client.Account_info.Username + " has joined the chat\n" + time.Now().Format("3:04 PM") + "\n"
+	send_message(client, msg)
 }
 
 /*
@@ -1566,15 +1585,8 @@ func leave_channel(client Client) bool {
 	for index, user := range channels[client.Current_channel].Users {
 		if user == client.Id {
 			
-			active_clients_mutex.Lock()
 			msg := "\n" + client.Account_info.Username + " has left the chat\n" + time.Now().Format("3:04 PM") + "\n"
-			packet := Data_packet{Type: CHAT_STATUS_MSG, Data: []byte(msg)}
-			for _, user := range channels[client.Current_channel].Users {
-				if user != client.Id {
-					send_data_packet(packet, *active_clients[user])
-				}
-			}
-			active_clients_mutex.Unlock()
+			send_message(client, msg)
 
 			if index + 1 == len(channels[client.Current_channel].Users) {
 				if len(channels[client.Current_channel].Users) == 0 {
@@ -1591,4 +1603,29 @@ func leave_channel(client Client) bool {
 		}
 	}
 	return false
+}
+
+/*
+ * This function sends a message to the channel that a client is currently in
+ */
+func send_message(client Client, msg string) {
+	active_clients_mutex.Lock()
+	packet := Data_packet{Type: CHAT_STATUS_MSG, Data: []byte(msg)}
+	for _, user := range channels[client.Current_channel].Users {
+		if user != client.Id {
+			send_data_packet(packet, *active_clients[user])
+		}
+	}
+	active_clients_mutex.Unlock()
+}
+
+func get_channel_id(topic []byte) int {
+	channels_mutex.Lock()
+	defer channels_mutex.Unlock()
+	for index, channel := range channels {
+		if string(channel.Topic) == string(topic) {
+			return index
+		}
+	}
+	return -1
 }

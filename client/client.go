@@ -122,7 +122,7 @@ const (
 
 // roles for the client
 const (
-	PLEB      = iota // 0
+	PUBLIC      = iota // 0
 	MODERATOR        // 1
 	ADMIN            // 2
 )
@@ -773,8 +773,6 @@ func parse_command(input string) Command_packet{
 	packet.Username = username
 	packet.Arguments = []byte(args.String())
 
-	fmt.Printf("command type: %s\n args: %s", tokens[0], args.String())
-
 	return packet
 }
 
@@ -823,11 +821,11 @@ func help_command(cpack Command_packet) []byte {
 	quit_channel := make(chan int)
 
 	if string(packet.Arguments) == "0" {
-		go display_help_screen(quit_channel, 0)
+		go display_help_screen(quit_channel, PUBLIC)
 	} else if string(packet.Arguments) == "1" {
-		go display_help_screen(quit_channel, 1)
+		go display_help_screen(quit_channel, MODERATOR)
 	} else if string(packet.Arguments) == "2" {
-		go display_help_screen(quit_channel, 2)
+		go display_help_screen(quit_channel, ADMIN)
 	} else {
 		os.Exit(1)
 	}
@@ -942,11 +940,11 @@ func display_help_screen(quit chan int, role int) {
 				fmt.Println("Below is a list of command and descriptions of what they do.  Press 'q' to quit")
 				fmt.Println(string(horizontal_line))
 				display_public_commands()
-				if role == 1 {
+				if role > 0 {
 					display_moderator_commands()
 				} 
 
-				if role > 2 {
+				if role > 1 {
 					display_admin_commands()
 				}
 			default:
@@ -958,11 +956,11 @@ func display_help_screen(quit chan int, role int) {
 			fmt.Println("Below is a list of command and descriptions of what they do. Press 'q' to quit")
 			fmt.Println(string(horizontal_line))
 			display_public_commands()
-			if role > 1 {
+			if role > 0 {
 				display_moderator_commands()
 			}
 
-			if role > 2 {
+			if role > 1 {
 				display_admin_commands()
 			}
 		}
@@ -1266,11 +1264,13 @@ func login() {
 	// resetting input
 	input = nil
 
+	var password_mask []byte
+
 	// clearing terminal
 	clear_terminal()
 
 	// printing prompt
-	print_login_password(string(input), nil)
+	print_login_password(string(password_mask), nil)
 
 	// looping until user enters valid password or exits
 	for {
@@ -1295,17 +1295,20 @@ func login() {
 			} else if key == keyboard.KeyBackspace || key == keyboard.KeyBackspace2 {
 				if len(input) > 0 {
 					input = input[:len(input) - 1]
+					password_mask = password_mask[:len(password_mask) - 1]
 				}
 			} else if key == keyboard.KeyCtrlC{
 				os.Exit(1)
 			} else if key == keyboard.KeySpace {
 				input = append(input, ' ')
+				password_mask = append(password_mask, '*')
 			} else {
 				input = append(input, byte(char))
+				password_mask = append(password_mask, '*')
 			}
 
 			// print login screen
-			print_login_password(string(input), nil)
+			print_login_password(string(password_mask), nil)
 		}
 
 		// checking if command was entered
@@ -1408,7 +1411,7 @@ func print_login_username(input string, error []byte) {
 		}
 		line_4 := "         " + RED + string(error) + RESET
 		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
-		fmt.Print(string(vertical_space[:terminal_height/2 - 1]))
+		fmt.Print(string(vertical_space[:terminal_height/2]))
 	}
 }
 
@@ -1487,14 +1490,9 @@ func print_login_password(input string, error []byte) {
  */
 func message() {
 	var input string
-
+	var packet Data_packet
 	// starting a go routine to handle inbound messages
 	go handle_inbound_msg()
-
-	// send join message
-	msg := "\n" + username + " has joined the chat\n" + time.Now().Format("3:04 PM") + "\n"
-	packet := Data_packet{Type: CHAT_STATUS_MSG, Data: []byte(msg)}
-	send_data_packet(packet)
 
 	// printing the chat strand
 	print_chat_strand()
