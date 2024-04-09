@@ -1326,6 +1326,7 @@ func login() {
 		send_data_packet(packet)
 
 		// reading packet from server
+		fmt.Println("reading")
 		packet = read_data_packet()
 
 		// determining if password was accepted
@@ -1337,7 +1338,7 @@ func login() {
 			client_status = IN_MAIN_MENU
 			break
 		} else {
-			print_login_password(string(input), packet.Data)
+			print_login_password(string(password_mask), packet.Data)
 		}
 	}
 
@@ -1481,7 +1482,7 @@ func print_login_password(input string, error []byte) {
 		}
 		line_4 := "         " + RED + string(error) + RESET
 		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
-		fmt.Print(string(vertical_space[:terminal_height/2 - 1]))
+		fmt.Print(string(vertical_space[:terminal_height/2]))
 	}
 }
 

@@ -898,7 +898,7 @@ func login(client Client) {
 		active_clients_mutex.Unlock()
 		fmt.Println("system: Found account for the given name")
 		packet.Type = ACCEPT
-		packet.Data = []byte("found account with that username")
+		packet.Data = []byte("system: found account with that username")
 		send_data_packet(packet, client)
 		break
 	}
@@ -930,13 +930,13 @@ func login(client Client) {
 			active_clients[client.Id].Logged_in = true
 			active_clients[client.Id].Account_info.Role = registered_accounts[index].Role
 			active_clients_mutex.Unlock()
-			registered_accounts_mutex.Unlock()
 			return
 		} else {
 			packet.Type = DENY
 			packet.Data = []byte("incorrect password")
 			send_data_packet(packet, client)
 		}
+		registered_accounts_mutex.Unlock()
 	}
 }
 
