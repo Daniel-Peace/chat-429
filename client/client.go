@@ -744,7 +744,11 @@ func handle_command(input string) []byte {
 	case MAIN:
 		return main_command(packet)
 	case CHANGE_TOPIC:
-		change_topic_command(packet)
+		return change_topic_command(packet)
+	case ADD_MOD:
+		return add_mod_command(packet)
+	case RM_MOD:
+		return rm_mod_command(packet)
 	}
 	return nil
 }
@@ -817,7 +821,17 @@ func help_command(cpack Command_packet) []byte {
 	send_command_packet(cpack)
 	
 	packet := read_command_packet()
-	fmt.Println("Recieved command packet from server")
+	if string(packet.Arguments) != "OK" {
+		return packet.Arguments
+	}
+
+	packet.Type = HELP
+	packet.Username = username
+	packet.Arguments = []byte("READY")
+	send_command_packet(packet)
+
+	packet = read_command_packet()
+
 	quit_channel := make(chan int)
 
 	if string(packet.Arguments) == "0" {
@@ -861,6 +875,10 @@ func help_command(cpack Command_packet) []byte {
  * This function handles the create command
  */
 func create_command(cpack Command_packet) []byte {
+
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	} 
 	// sending command
 	send_command_packet(cpack)
 
@@ -871,6 +889,7 @@ func create_command(cpack Command_packet) []byte {
 	}
 	return cpack.Arguments
 }
+
 /*
  * This function handles the main command
  */
@@ -890,17 +909,17 @@ func main_command(cpack Command_packet) []byte {
 		custom_error_exit(OUT_OF_SYNC)
 	}
 
+	// checking if command was successful
 	if string(cpack.Arguments) != "Success" {
-		custom_error_exit(UNEXPECTED_DATA)
+		return cpack.Arguments
+	} else {
+		fmt.Println("updating status")
+		client_status = IN_MAIN_MENU
+		dpack := Data_packet{Type: CLOSE, Username: username, Data: []byte("State changed")}
+		send_data_packet(dpack)
+		chat_strand = nil
 	}
 
-	fmt.Println("updating status")
-	client_status = IN_MAIN_MENU
-	dpack := Data_packet{Type: CLOSE, Username: username, Data: []byte("State changed")}
-	send_data_packet(dpack)
-
-	chat_strand = nil
-	
 	return cpack.Arguments
 }
 
@@ -918,6 +937,42 @@ func change_topic_command(cpack Command_packet) []byte {
 	// getting response from server
 	cpack = read_command_packet()
 	if cpack.Type != CHANGE_TOPIC {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	return cpack.Arguments
+}
+
+func add_mod_command(cpack Command_packet) []byte {
+	// checking if user is signed in
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// send command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != ADD_MOD {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	return cpack.Arguments
+}
+
+func rm_mod_command(cpack Command_packet) []byte {
+	// checking if user is signed in
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// send command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != ADD_MOD {
 		custom_error_exit(OUT_OF_SYNC)
 	}
 
@@ -1298,7 +1353,12 @@ func login() {
 					password_mask = password_mask[:len(password_mask) - 1]
 				}
 			} else if key == keyboard.KeyCtrlC{
-				os.Exit(1)
+				var cpack Command_packet
+				cpack.Type = EXIT
+				cpack.Username = ""
+				cpack.Arguments = []byte("client disconnecting")
+				client_status = QUITTING
+				exit_command(cpack)
 			} else if key == keyboard.KeySpace {
 				input = append(input, ' ')
 				password_mask = append(password_mask, '*')
@@ -1490,34 +1550,79 @@ func print_login_password(input string, error []byte) {
  * This function is responcible for handling messaging
  */
 func message() {
-	var input string
+	// var input string
+	var input []byte
+	var err_msg []byte
 	var packet Data_packet
 	// starting a go routine to handle inbound messages
 	go handle_inbound_msg()
 
-	// printing the chat strand
-	print_chat_strand()
-
-	// creating a scanner to get user input
-	scanner := bufio.NewScanner(os.Stdin)
-
 	// scanning user inputs and sending messages
+	if err := keyboard.Open(); err != nil {
+		panic(err)
+	}
+
 	for {
-		if scanner.Scan() {
-			// storing scanned text in variable
-			input = scanner.Text()
+		input = nil
+		// clearing the terminal
+		clear_terminal()
+
+		// printing login screen
+		print_chat_strand(input, err_msg)
+
+		// getting user input
+		for {
+			// getting key press
+			char, key, err := keyboard.GetSingleKey()
+			if err != nil {
+				panic(err)
+			}
+
+			// checking if enter key was pressed
+			if key == keyboard.KeyEnter {
+				err_msg = nil
+				break
+			} else if key == keyboard.KeyBackspace || key == keyboard.KeyBackspace2 {
+				if len(input) > 0 {
+					input = input[:len(input) - 1]
+				}
+			} else if key == keyboard.KeyCtrlC{
+				var cpack Command_packet
+				cpack.Type = EXIT
+				cpack.Username = ""
+				cpack.Arguments = []byte("client disconnecting")
+				client_status = QUITTING
+				exit_command(cpack)
+			} else if key == keyboard.KeySpace {
+				input = append(input, ' ')
+			} else {
+				input = append(input, byte(char))
+			}
+
+			// clearing the terminal
+			clear_terminal()
+
+			// printing login screen
+			print_chat_strand(input, err_msg)
 		}
-		fmt.Println(string(horizontal_line))
+
+
+
+		// if scanner.Scan() {
+		// 	// storing scanned text in variable
+		// 	input = scanner.Text()
+		// }
+		// fmt.Println(string(horizontal_line))
 
 		// checks if a command was entered and executes it if it was
-		if is_comand(input) {
-			handle_command(input)
+		if is_comand(string(input)) {
+			err_msg = handle_command(string(input))
 			if client_status != MESSAGING {
 				fmt.Println("client state changed")
 				return
 			}
 			clear_terminal()
-			print_chat_strand()
+			print_chat_strand(input, err_msg)
 			continue
 		}
 		
@@ -1535,7 +1640,7 @@ func message() {
 
 		// reprinting chat strand
 		if client_status == MESSAGING {
-			print_chat_strand()
+			print_chat_strand(input, err_msg)
 		}
 	}
 }
@@ -1562,7 +1667,7 @@ func handle_inbound_msg() {
 
 			if client_status == MESSAGING {
 				// reprinting updated chat strand
-				print_chat_strand()
+				print_chat_strand(nil, nil)
 			}
 		}
 	}
@@ -1604,7 +1709,13 @@ func error_exit(err error) {
 /*
  * This function formats and prints the chat strand
  */
-func print_chat_strand() {
+func print_chat_strand(input []byte, err_msg []byte) {
+	var padding []byte
+
+	for i := 0; i < terminal_width; i++ {
+		padding = append(padding, ' ')
+	}
+
 	// clearing terminal
 	clear_terminal()
 
@@ -1774,10 +1885,18 @@ func print_chat_strand() {
 		}
 	}
 
-	// checking if there are messages in the strand
-	fmt.Print("\n\n\n")
+	
+
+	if err_msg != nil {
+		fmt.Print("\n\n")
+		msg := YELLOW + "         " + string(err_msg) + RESET
+		fmt.Printf("%*s\n", ((terminal_width-len(msg))/2)+len(msg), msg)
+	} else {
+		fmt.Print("\n\n\n")
+	}
+	
 	fmt.Println(string(horizontal_line))
-	arrow := GREEN + "-> " + RESET
+	arrow := GREEN + "-> " + RESET + string(input)
 	fmt.Print(arrow)
 }
 
