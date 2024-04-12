@@ -123,6 +123,7 @@ type Account_info struct {
 	Username string
 	Password string
 	Role     int
+	Banned   bool
 }
 
 // struct for holding client data
@@ -279,7 +280,7 @@ func init_active_clients() {
 	// initializing each client in the array
 	for index := range active_clients {
 		active_clients[index] = &Client{
-			Account_info:    Account_info{Username: "", Password: "", Role: 0},
+			Account_info:    Account_info{Username: "", Password: "", Role: 0, Banned: false},
 			Id:              -1,
 			data_sock:       nil,
 			command_sock:    nil,
@@ -306,7 +307,7 @@ func load_accounts() {
 	}
 
 	// adding the admin account to the registered accounts array
-	admin_account := Account_info{Username: "Admin", Password: "gochat", Role: ADMIN}
+	admin_account := Account_info{Username: "Admin", Password: "gochat", Role: ADMIN, Banned: false}
 	registered_accounts_mutex.Lock()
 	defer registered_accounts_mutex.Unlock()
 	registered_accounts = append(registered_accounts, admin_account)
@@ -637,7 +638,7 @@ func find_free_space_for_client() int {
 func serve_client(client Client) {
 	// starting a routine to handle inbound commands
 	go handle_inbound_commands(client)
-	
+
 	// core loop to handle a clients state
 	for {
 		// getting latest state if client
@@ -876,12 +877,6 @@ func login(client Client) {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
-		active_clients_mutex.Lock()
-		for _, user := range active_clients {
-			fmt.Printf("Account username: %s\n Account status: %t\n", user.Account_info.Username, user.Logged_in)
-		}
-		active_clients_mutex.Unlock()
-
 		// checking if an account exists with the given username
 		index, exists = name_is_exists(string(packet.Data))
 
@@ -897,6 +892,11 @@ func login(client Client) {
 		if exists && is_logged_in(string(packet.Data)) {
 			packet.Type = DENY
 			packet.Data = []byte("This account is already logged in somewhere")
+			send_data_packet(packet, client)
+			continue
+		} else if exists && is_banned(index) {
+			packet.Type = DENY
+			packet.Data = []byte("This account is banned from the server")
 			send_data_packet(packet, client)
 			continue
 		}
@@ -947,6 +947,13 @@ func login(client Client) {
 			registered_accounts_mutex.Unlock()
 		}
 	}
+}
+
+func is_banned(user_index int) bool{
+	registered_accounts_mutex.Lock()
+	defer registered_accounts_mutex.Unlock()
+
+	return registered_accounts[user_index].Banned
 }
 
 /*
@@ -1077,8 +1084,8 @@ func is_logged_in(username string) bool {
 	for _, user := range active_clients {
 		if user.Account_info.Username == username {
 			return true
-		}	
-		
+		}
+
 	}
 	return false
 }
@@ -1277,6 +1284,8 @@ func execute_command(command_packet Command_packet, client Client) bool {
 	case DISCONNECT_S:
 	case BAN_C:
 	case BAN_S:
+		fmt.Println("system: Running ban-s command")
+		ban_s_command(client, command)
 	case CREATE:
 		fmt.Println("system: Running create command")
 		create_command(client, command)
@@ -1340,7 +1349,7 @@ func help_command(client Client, command Parsed_command) {
 		cpack.Arguments = []byte("Too many arguments")
 		send_command_packet(cpack, client)
 		return
-	} 
+	}
 
 	cpack.Arguments = []byte("OK")
 	send_command_packet(cpack, client)
@@ -1462,7 +1471,7 @@ func change_topic_command(client Client, command Parsed_command) {
 		cpack.Arguments = []byte("Not enough arguments")
 	} else if len(command.Args) > 2 {
 		cpack.Arguments = []byte("Too many arguments")
-	} else  {
+	} else {
 		index := get_channel_id([]byte(command.Args[0]))
 
 		channels_mutex.Lock()
@@ -1568,6 +1577,77 @@ func rm_mod_command(client Client, command Parsed_command) {
 	send_command_packet(cpack, client)
 
 	save_accounts()
+}
+
+func ban_s_command(client Client, command Parsed_command) {
+	// updating client struct
+	client = update_client(client)
+
+	// creating return packet
+	var cpack Command_packet
+	cpack.Type = BAN_S
+	cpack.Username = client.Account_info.Username
+
+	if client.Account_info.Role < MODERATOR { // checking if you have permission
+		cpack.Arguments = []byte("You don't have permission to use this command")
+	} else if len(command.Args) < 1 { // checking if there are enough arguments
+		cpack.Arguments = []byte("Not enough arguments")
+	} else if len(command.Args) > 1 { // checking if there are too many arguments
+		cpack.Arguments = []byte("Too many arguments")
+	} else if client.Account_info.Username == command.Args[0] { // checking if you are trying to ban yourself
+		cpack.Arguments = []byte("Cannot ban yourself")
+	} else {
+		// getting the index of the user given their name
+		user_index := get_user_index(command.Args[0])
+
+		if user_index == -1 {
+			cpack.Arguments = []byte("Could not find a user with that name")
+		} else if client.Account_info.Role == ADMIN {
+			// banning user from server
+			ban_from_server(user_index)
+			cpack.Arguments = []byte("Banned " + command.Args[0] + " from the server")
+		} else {
+			if is_public(user_index) {
+				ban_from_server(user_index)
+				cpack.Arguments = []byte("Banned " + command.Args[0] + " from the server")
+			} else {
+				cpack.Arguments = []byte("Must be Admin to ban a moderator")
+			}
+		}
+	}
+
+	send_command_packet(cpack, client)
+}
+
+func ban_from_server(user_index int) {
+	registered_accounts_mutex.Lock()
+	defer registered_accounts_mutex.Unlock()
+
+	registered_accounts[user_index].Banned = true
+
+	save_accounts()
+
+	// TODO: Disconnect the user from the server
+}
+
+func is_public(user_index int) bool {
+	registered_accounts_mutex.Lock()
+	defer registered_accounts_mutex.Unlock()
+
+	return registered_accounts[user_index].Role == PUBLIC
+}
+
+func get_user_index(username string) int {
+	registered_accounts_mutex.Lock()
+	defer registered_accounts_mutex.Unlock()
+
+	for index, user := range registered_accounts {
+		if user.Username == username {
+			return index
+		}
+	}
+
+	return -1
 }
 
 /*
@@ -1710,6 +1790,7 @@ func update_client(client Client) Client {
 	defer active_clients_mutex.Unlock()
 	return *active_clients[client.Id]
 }
+
 /*
  * This function handles leaving a channel
  */
@@ -1720,19 +1801,19 @@ func leave_channel(client Client) bool {
 
 	for index, user := range channels[client.Current_channel].Users {
 		if user == client.Id {
-			
+
 			msg := "\n" + client.Account_info.Username + " has left the chat\n" + time.Now().Format("3:04 PM") + "\n"
 			send_message(client, msg)
 
-			if index + 1 == len(channels[client.Current_channel].Users) {
+			if index+1 == len(channels[client.Current_channel].Users) {
 				if len(channels[client.Current_channel].Users) == 0 {
 					channels[client.Current_channel].Users = nil
 				} else {
-					channels[client.Current_channel].Users = channels[client.Current_channel].Users[:len(channels[client.Current_channel].Users) - 1]
+					channels[client.Current_channel].Users = channels[client.Current_channel].Users[:len(channels[client.Current_channel].Users)-1]
 				}
 				return true
 			} else {
-				channels[client.Current_channel].Users = append(channels[client.Current_channel].Users[:index], channels[client.Current_channel].Users[index +1:]...)
+				channels[client.Current_channel].Users = append(channels[client.Current_channel].Users[:index], channels[client.Current_channel].Users[index+1:]...)
 				return true
 			}
 

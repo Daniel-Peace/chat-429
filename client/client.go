@@ -720,361 +720,6 @@ func display_opt() {
 }
 
 /*
- * This function checks if a string is a command
- */
-func is_comand(input string) bool {
-	tokens := strings.Split(input, " ")
-	return command_to_int[tokens[0]] > 0
-}
-
-/*
- * This function executes the command entered
- */
-func handle_command(input string) []byte {
-	// sending the command to the server
-	packet := parse_command(input)
-
-	switch packet.Type {
-	case HELP:
-		return help_command(packet)
-	case EXIT:
-		return exit_command(packet)
-	case CREATE:
-		return create_command(packet)
-	case MAIN:
-		return main_command(packet)
-	case CHANGE_TOPIC:
-		return change_topic_command(packet)
-	case ADD_MOD:
-		return add_mod_command(packet)
-	case RM_MOD:
-		return rm_mod_command(packet)
-	}
-	return nil
-}
-
-/*
- * This function parses commands
- */
-func parse_command(input string) Command_packet{
-	var packet Command_packet
-	var args strings.Builder
-
-	// splitting input string into tokens
-	tokens := strings.Split(input, " ")
-
-	// looping over tokens to build agument string
-	for i := 1; i < len(tokens); i++ {
-		if i != 1 {
-			args.WriteString(":")
-		}
-
-		args.WriteString(tokens[i])
-	}
-
-	// initializing packet
-	packet.Type = command_to_int[tokens[0]]
-	packet.Username = username
-	packet.Arguments = []byte(args.String())
-
-	return packet
-}
-
-/*
- * This function handles the client exiting the application
- */
-func exit_command(cpack Command_packet) []byte {
-	// send command to server
-	send_command_packet(cpack)
-
-	// checking if the server changed states
-	cpack = read_command_packet()
-	if cpack.Type != EXIT || string(cpack.Arguments) != "READY" {
-		custom_error_exit(UNKNOWN)
-	}
-
-	// closing function on server side that is using data_socket
-	dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
-	send_data_packet(dpack)
-
-	// creating exit packet
-	cpack.Type = EXIT
-	cpack.Username = username
-	cpack.Arguments = []byte("CLOSE_SENT")
-
-	// sending packet to server
-	send_command_packet(cpack)
-
-	// reading from server
-	read_command_packet()
-
-	// shutting down client
-	shutdown()
-	return nil
-}
-
-/*
- * This function handles the client accessing the help menu
- */
-func help_command(cpack Command_packet) []byte {
-	// send command to server
-	send_command_packet(cpack)
-	
-	packet := read_command_packet()
-	if string(packet.Arguments) != "OK" {
-		return packet.Arguments
-	}
-
-	packet.Type = HELP
-	packet.Username = username
-	packet.Arguments = []byte("READY")
-	send_command_packet(packet)
-
-	packet = read_command_packet()
-
-	quit_channel := make(chan int)
-
-	if string(packet.Arguments) == "0" {
-		go display_help_screen(quit_channel, PUBLIC)
-	} else if string(packet.Arguments) == "1" {
-		go display_help_screen(quit_channel, MODERATOR)
-	} else if string(packet.Arguments) == "2" {
-		go display_help_screen(quit_channel, ADMIN)
-	} else {
-		os.Exit(1)
-	}
-
-	quit_channel <- 1
-
-	if err := keyboard.Open(); err != nil {
-		panic(err)
-	}
-	defer keyboard.Close()
-
-	for {
-		// getting key press
-		char, _, err := keyboard.GetSingleKey()
-		if err != nil {
-			panic(err)
-		}
-
-		if char == 'q' || char == 'Q' {
-			quit_channel <- 0
-			break
-		}
-	}
-
-	packet.Type = HELP
-	packet.Username = username
-	packet.Arguments = []byte("DONE")
-	send_command_packet(packet)
-	return nil
-}
-
-/*
- * This function handles the create command
- */
-func create_command(cpack Command_packet) []byte {
-
-	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
-		return []byte("Command not availbale. Must sign in first.")
-	} 
-	// sending command
-	send_command_packet(cpack)
-
-	// getting repsonse from server
-	cpack = read_command_packet()
-	if cpack.Type != CREATE {
-		custom_error_exit(OUT_OF_SYNC)
-	}
-	return cpack.Arguments
-}
-
-/*
- * This function handles the main command
- */
-func main_command(cpack Command_packet) []byte {
-	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
-		return []byte("Command not availbale. Must sign in first.")
-	} else if client_status == IN_MAIN_MENU {
-		return []byte("You are already in the main menu")
-	}
-
-	// send server the command
-	send_command_packet(cpack)
-
-	// getting response from server
-	cpack = read_command_packet()
-	if cpack.Type != MAIN {
-		custom_error_exit(OUT_OF_SYNC)
-	}
-
-	// checking if command was successful
-	if string(cpack.Arguments) != "Success" {
-		return cpack.Arguments
-	} else {
-		fmt.Println("updating status")
-		client_status = IN_MAIN_MENU
-		dpack := Data_packet{Type: CLOSE, Username: username, Data: []byte("State changed")}
-		send_data_packet(dpack)
-		chat_strand = nil
-	}
-
-	return cpack.Arguments
-}
-
-/*
- * This function handles the change_topic command
- */
-func change_topic_command(cpack Command_packet) []byte {
-	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
-		return []byte("Command not availbale. Must sign in first.")
-	}
-
-	// sending command to server
-	send_command_packet(cpack)
-
-	// getting response from server
-	cpack = read_command_packet()
-	if cpack.Type != CHANGE_TOPIC {
-		custom_error_exit(OUT_OF_SYNC)
-	}
-
-	return cpack.Arguments
-}
-
-func add_mod_command(cpack Command_packet) []byte {
-	// checking if user is signed in
-	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
-		return []byte("Command not availbale. Must sign in first.")
-	}
-
-	// send command to server
-	send_command_packet(cpack)
-
-	// getting response from server
-	cpack = read_command_packet()
-	if cpack.Type != ADD_MOD {
-		custom_error_exit(OUT_OF_SYNC)
-	}
-
-	return cpack.Arguments
-}
-
-func rm_mod_command(cpack Command_packet) []byte {
-	// checking if user is signed in
-	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
-		return []byte("Command not availbale. Must sign in first.")
-	}
-
-	// send command to server
-	send_command_packet(cpack)
-
-	// getting response from server
-	cpack = read_command_packet()
-	if cpack.Type != ADD_MOD {
-		custom_error_exit(OUT_OF_SYNC)
-	}
-
-	return cpack.Arguments
-}
-
-/*
- * This function handles the displaying the help screen
- */
-func display_help_screen(quit chan int, role int) {
-	for {
-		select {
-		case q := <-quit:
-			switch q {
-			case 0:
-				return
-			case 1:
-				clear_terminal()
-				fmt.Println(string(horizontal_line))
-				fmt.Println("Below is a list of command and descriptions of what they do.  Press 'q' to quit")
-				fmt.Println(string(horizontal_line))
-				display_public_commands()
-				if role > 0 {
-					display_moderator_commands()
-				} 
-
-				if role > 1 {
-					display_admin_commands()
-				}
-			default:
-				return
-			}
-		default:
-			clear_terminal()
-			fmt.Println(string(horizontal_line))
-			fmt.Println("Below is a list of command and descriptions of what they do. Press 'q' to quit")
-			fmt.Println(string(horizontal_line))
-			display_public_commands()
-			if role > 0 {
-				display_moderator_commands()
-			}
-
-			if role > 1 {
-				display_admin_commands()
-			}
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
-}
-
-/*
- * This function prints the commands for the public role
- */
-func display_public_commands() {
-	fmt.Println("Public commands:")
-	fmt.Print("\n")
-	fmt.Println(" - /help\t\t\t\tBrings up the help screen which lists all commands")
-	fmt.Print("\n")
-	fmt.Println(" - /main\t\t\t\tDisconnects you from the current channel and takes you to the main menu")
-	fmt.Print("\n")
-	fmt.Println(" - /log-out\t\t\t\tLogs out of the current account and takes you to the sign in screen")
-	fmt.Print("\n")
-	fmt.Println(" - /list-c\t\t\t\tLists all users in the current channel")
-	fmt.Print("\n")
-	fmt.Println(" - /list-s\t\t\t\tLists all users on the server")
-}
-
-/*
- * This function prints the commands for the moderator role
- */
-func display_moderator_commands() {
-	fmt.Print("\n")
-	fmt.Println("Moderator commands:")
-	fmt.Print("\n")
-	fmt.Println(" - /disconnect-c <channel> <username>\tDisconnects a user from a specific channel")
-	fmt.Print("\n")
-	fmt.Println(" - /disconnect-s <username>\t\tDisconnects a user from the server")
-	fmt.Print("\n")
-	fmt.Println(" - /ban-c <channel> <username>\t\tBans a user from a specific channel")
-	fmt.Print("\n")
-	fmt.Println(" - /ban-s <username>\t\t\tBans a user from the server")
-	fmt.Print("\n")
-	fmt.Println(" - /create <channel name> <topic>\tCreates a new channel with a given name and topic")
-	fmt.Print("\n")
-	fmt.Println(" - /delete <channel>\t\t\tDeletes a specific channel")
-	fmt.Print("\n")
-	fmt.Println(" - /change-topic <channel> <topic>\tchanges the topic of a specific channel")
-}
-
-/*
- * This function prints the commands for the admin role
- */
-func display_admin_commands() {
-	fmt.Print("\n")
-	fmt.Println("Moderator commands:")
-	fmt.Print("\n")
-	fmt.Println(" - /add-mod <username>\t\t\tGives a user the role moderator")
-	fmt.Print("\n")
-	fmt.Println(" - /rm-mod <username>\t\t\tRemoves the moderator role from a user")
-}
-
-/*
  * This function is responcible for registering the client with the server.
  * This includes getting a username and password to create an account
  */
@@ -2117,4 +1762,384 @@ func print_main_menu_without_choice(channels []string) {
 		fmt.Printf("%*s\n", ((terminal_width-len(msg))/2)+len(msg), msg)
 		fmt.Print("\n")
 	}
+}
+
+// -----------------------------------------------------------------------------------------------------------------------
+// COMMANDS
+// -----------------------------------------------------------------------------------------------------------------------
+
+/*
+ * This function checks if a string is a command
+ */
+func is_comand(input string) bool {
+	tokens := strings.Split(input, " ")
+	return command_to_int[tokens[0]] > 0
+}
+
+/*
+ * This function executes the command entered
+ */
+func handle_command(input string) []byte {
+	// sending the command to the server
+	packet := parse_command(input)
+
+	switch packet.Type {
+	case HELP:
+		return help_command(packet)
+	case EXIT:
+		return exit_command(packet)
+	case CREATE:
+		return create_command(packet)
+	case MAIN:
+		return main_command(packet)
+	case CHANGE_TOPIC:
+		return change_topic_command(packet)
+	case ADD_MOD:
+		return add_mod_command(packet)
+	case RM_MOD:
+		return rm_mod_command(packet)
+	case BAN_S:
+		return ban_s_command(packet)
+	default:
+		return nil
+	}	
+}
+
+/*
+ * This function parses commands
+ */
+func parse_command(input string) Command_packet{
+	var packet Command_packet
+	var args strings.Builder
+
+	// splitting input string into tokens
+	tokens := strings.Split(input, " ")
+
+	// looping over tokens to build agument string
+	for i := 1; i < len(tokens); i++ {
+		if i != 1 {
+			args.WriteString(":")
+		}
+
+		args.WriteString(tokens[i])
+	}
+
+	// initializing packet
+	packet.Type = command_to_int[tokens[0]]
+	packet.Username = username
+	packet.Arguments = []byte(args.String())
+
+	return packet
+}
+
+/*
+ * This function handles the client exiting the application
+ */
+func exit_command(cpack Command_packet) []byte {
+	// send command to server
+	send_command_packet(cpack)
+
+	// checking if the server changed states
+	cpack = read_command_packet()
+	if cpack.Type != EXIT || string(cpack.Arguments) != "READY" {
+		custom_error_exit(UNKNOWN)
+	}
+
+	// closing function on server side that is using data_socket
+	dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
+	send_data_packet(dpack)
+
+	// creating exit packet
+	cpack.Type = EXIT
+	cpack.Username = username
+	cpack.Arguments = []byte("CLOSE_SENT")
+
+	// sending packet to server
+	send_command_packet(cpack)
+
+	// reading from server
+	read_command_packet()
+
+	// shutting down client
+	shutdown()
+	return nil
+}
+
+/*
+ * This function handles the client accessing the help menu
+ */
+func help_command(cpack Command_packet) []byte {
+	// send command to server
+	send_command_packet(cpack)
+	
+	packet := read_command_packet()
+	if string(packet.Arguments) != "OK" {
+		return packet.Arguments
+	}
+
+	packet.Type = HELP
+	packet.Username = username
+	packet.Arguments = []byte("READY")
+	send_command_packet(packet)
+
+	packet = read_command_packet()
+
+	quit_channel := make(chan int)
+
+	if string(packet.Arguments) == "0" {
+		go display_help_screen(quit_channel, PUBLIC)
+	} else if string(packet.Arguments) == "1" {
+		go display_help_screen(quit_channel, MODERATOR)
+	} else if string(packet.Arguments) == "2" {
+		go display_help_screen(quit_channel, ADMIN)
+	} else {
+		os.Exit(1)
+	}
+
+	quit_channel <- 1
+
+	if err := keyboard.Open(); err != nil {
+		panic(err)
+	}
+	defer keyboard.Close()
+
+	for {
+		// getting key press
+		char, _, err := keyboard.GetSingleKey()
+		if err != nil {
+			panic(err)
+		}
+
+		if char == 'q' || char == 'Q' {
+			quit_channel <- 0
+			break
+		}
+	}
+
+	packet.Type = HELP
+	packet.Username = username
+	packet.Arguments = []byte("DONE")
+	send_command_packet(packet)
+	return nil
+}
+
+/*
+ * This function handles the main command
+ */
+func main_command(cpack Command_packet) []byte {
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	} else if client_status == IN_MAIN_MENU {
+		return []byte("You are already in the main menu")
+	}
+
+	// send server the command
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != MAIN {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	// checking if command was successful
+	if string(cpack.Arguments) != "Success" {
+		return cpack.Arguments
+	} else {
+		fmt.Println("updating status")
+		client_status = IN_MAIN_MENU
+		dpack := Data_packet{Type: CLOSE, Username: username, Data: []byte("State changed")}
+		send_data_packet(dpack)
+		chat_strand = nil
+	}
+
+	return cpack.Arguments
+}
+
+/*
+ * This function handles the create command
+ */
+ func create_command(cpack Command_packet) []byte {
+
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	} 
+	// sending command
+	send_command_packet(cpack)
+
+	// getting repsonse from server
+	cpack = read_command_packet()
+	if cpack.Type != CREATE {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+	return cpack.Arguments
+}
+
+/*
+ * This function handles the change_topic command
+ */
+func change_topic_command(cpack Command_packet) []byte {
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// sending command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != CHANGE_TOPIC {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	return cpack.Arguments
+}
+
+func add_mod_command(cpack Command_packet) []byte {
+	// checking if user is signed in
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// send command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != ADD_MOD {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	return cpack.Arguments
+}
+
+func rm_mod_command(cpack Command_packet) []byte {
+	// checking if user is signed in
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// send command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != ADD_MOD {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	return cpack.Arguments
+}
+
+func ban_s_command(cpack Command_packet) []byte{
+	// checking if user is signed in
+	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
+		return []byte("Command not availbale. Must sign in first.")
+	}
+
+	// send command to server
+	send_command_packet(cpack)
+
+	// getting response from server
+	cpack = read_command_packet()
+	if cpack.Type != BAN_S {
+		custom_error_exit(OUT_OF_SYNC)
+	}
+
+	return cpack.Arguments
+}
+
+/*
+ * This function handles the displaying the help screen
+ */
+func display_help_screen(quit chan int, role int) {
+	for {
+		select {
+		case q := <-quit:
+			switch q {
+			case 0:
+				return
+			case 1:
+				clear_terminal()
+				fmt.Println(string(horizontal_line))
+				fmt.Println("Below is a list of command and descriptions of what they do.  Press 'q' to quit")
+				fmt.Println(string(horizontal_line))
+				display_public_commands()
+				if role > 0 {
+					display_moderator_commands()
+				} 
+
+				if role > 1 {
+					display_admin_commands()
+				}
+			default:
+				return
+			}
+		default:
+			clear_terminal()
+			fmt.Println(string(horizontal_line))
+			fmt.Println("Below is a list of command and descriptions of what they do. Press 'q' to quit")
+			fmt.Println(string(horizontal_line))
+			display_public_commands()
+			if role > 0 {
+				display_moderator_commands()
+			}
+
+			if role > 1 {
+				display_admin_commands()
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+}
+
+/*
+ * This function prints the commands for the public role
+ */
+func display_public_commands() {
+	fmt.Println("Public commands:")
+	fmt.Print("\n")
+	fmt.Println(" - /help\t\t\t\tBrings up the help screen which lists all commands")
+	fmt.Print("\n")
+	fmt.Println(" - /main\t\t\t\tDisconnects you from the current channel and takes you to the main menu")
+	fmt.Print("\n")
+	fmt.Println(" - /log-out\t\t\t\tLogs out of the current account and takes you to the sign in screen")
+	fmt.Print("\n")
+	fmt.Println(" - /list-c\t\t\t\tLists all users in the current channel")
+	fmt.Print("\n")
+	fmt.Println(" - /list-s\t\t\t\tLists all users on the server")
+}
+
+/*
+ * This function prints the commands for the moderator role
+ */
+func display_moderator_commands() {
+	fmt.Print("\n")
+	fmt.Println("Moderator commands:")
+	fmt.Print("\n")
+	fmt.Println(" - /disconnect-c <channel> <username>\tDisconnects a user from a specific channel")
+	fmt.Print("\n")
+	fmt.Println(" - /disconnect-s <username>\t\tDisconnects a user from the server")
+	fmt.Print("\n")
+	fmt.Println(" - /ban-c <channel> <username>\t\tBans a user from a specific channel")
+	fmt.Print("\n")
+	fmt.Println(" - /ban-s <username>\t\t\tBans a user from the server")
+	fmt.Print("\n")
+	fmt.Println(" - /create <topic>\t\t\tCreates a new channel with a given topic")
+	fmt.Print("\n")
+	fmt.Println(" - /delete <channel>\t\t\tDeletes a specific channel")
+	fmt.Print("\n")
+	fmt.Println(" - /change-topic <channel> <topic>\tchanges the topic of a specific channel")
+}
+
+/*
+ * This function prints the commands for the admin role
+ */
+func display_admin_commands() {
+	fmt.Print("\n")
+	fmt.Println("Moderator commands:")
+	fmt.Print("\n")
+	fmt.Println(" - /add-mod <username>\t\t\tGives a user the role moderator")
+	fmt.Print("\n")
+	fmt.Println(" - /rm-mod <username>\t\t\tRemoves the moderator role from a user")
 }
