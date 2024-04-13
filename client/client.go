@@ -18,13 +18,16 @@ import (
 
 	"github.com/eiannone/keyboard"
 	"golang.org/x/crypto/ssh/terminal"
+    "github.com/faiface/beep/mp3"
+    "github.com/faiface/beep/speaker"
 )
 
 // constants
 const (
 	// client and server information
-	SERVER_HOST = "localhost"
-	CLIENT_HOST = "localhost"
+	// SERVER_HOST = "localhost"
+	SERVER_HOST = "192.168.86.37"
+	CLIENT_HOST = "192.168.86.195"
 	COMMAND_PORT = "7777"
 	DATA_PORT = "7778"
 	CONNECTION_TYPE = "tcp"
@@ -1465,6 +1468,22 @@ func message() {
 	var input []byte
 	var err_msg []byte
 	var packet Data_packet
+
+	f, err := os.Open("send.mp3")
+    if err != nil {
+        panic(err)
+    }
+    defer f.Close()
+
+	// Decode the MP3 data
+    streamer, format, err := mp3.Decode(f)
+    if err != nil {
+        panic(err)
+    }
+
+	// Initialize the speaker with the format of the audio
+    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
 	// starting a go routine to handle inbound messages
 	go handle_inbound_msg(&input)
 
@@ -1474,6 +1493,10 @@ func message() {
 	}
 
 	for {
+
+		// Play the audio stream
+		streamer.Seek(0) // Reset streamer position to the beginning
+
 		input = nil
 		// clearing the terminal
 		clear_terminal()
@@ -1546,6 +1569,15 @@ func message() {
 		// adding new message to chat strand
 		chat_strand = append(chat_strand, packet)
 
+		// Play the audio stream
+		speaker.Play(streamer)
+
+		// // Calculate the duration of the stream based on the number of samples and sample rate
+		// duration := time.Duration(streamer.Len())
+
+		// // Sleep for the duration of the audio to let it play
+		// <-time.After(duration)
+
 		// sending message to server
 		send_data_packet(packet)
 
@@ -1560,8 +1592,26 @@ func message() {
  * This function is responcible for handling inbound messages
  */
 func handle_inbound_msg(input *[]byte) {
+
+	f, err := os.Open("receive.mp3")
+    if err != nil {
+        panic(err)
+    }
+    defer f.Close()
+
+	// Decode the MP3 data
+    streamer, format, err := mp3.Decode(f)
+    if err != nil {
+        panic(err)
+    }
+
+	// Initialize the speaker with the format of the audio
+    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
 	// reading inbound messages
 	for {
+		// Play the audio stream
+		streamer.Seek(0) // Reset streamer position to the beginning
+
 		// reading packet
 		packet := read_data_packet()
 
@@ -1575,10 +1625,13 @@ func handle_inbound_msg(input *[]byte) {
 			mutex_chat.Lock()
 			chat_strand = append(chat_strand, packet)
 			mutex_chat.Unlock()
+			
 
 			if client_status == MESSAGING {
 				// reprinting updated chat strand
 				print_chat_strand(*input, nil)
+				// Play the audio stream
+				speaker.Play(streamer)
 			}
 		}
 	}
