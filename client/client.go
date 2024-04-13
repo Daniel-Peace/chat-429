@@ -1566,50 +1566,6 @@ func message() {
  * This function is responcible for handling inbound messages
  */
 func handle_inbound_msg(input *[]byte) {
-	f1, err := os.Open("joining.mp3")
-	if err != nil {
-		panic(err)
-	}
-	defer f1.Close()
-
-	// Decode the MP3 data
-	streamer1, format, err := mp3.Decode(f1)
-	if err != nil {
-		panic(err)
-	}
-
-	// Initialize the speaker with the format of the audio
-	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-
-	f2, err := os.Open("leaving.mp3")
-	if err != nil {
-		panic(err)
-	}
-	defer f2.Close()
-
-	// Decode the MP3 data
-	streamer2, format, err := mp3.Decode(f2)
-	if err != nil {
-		panic(err)
-	}
-
-	// Initialize the speaker with the format of the audio
-	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-
-	f3, err := os.Open("receive.mp3")
-	if err != nil {
-		panic(err)
-	}
-	defer f3.Close()
-
-	// Decode the MP3 data
-	streamer3, format, err := mp3.Decode(f3)
-	if err != nil {
-		panic(err)
-	}
-
-	// Initialize the speaker with the format of the audio
-	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
 
 	// reading inbound messages
 	for {
@@ -1631,33 +1587,11 @@ func handle_inbound_msg(input *[]byte) {
 			if client_status == MESSAGING {
 
 				if packet.Type == JOIN_MSG {
-
-					// Play the audio stream
-					streamer1.Seek(0) // Reset streamer position to the beginning
-
-					// Play the audio stream
-					speaker.Play(streamer1)
-
-					<-time.After(time.Duration(streamer1.Len()))
-					// go play_sound("joining.mp3")
+					go play_sound("joining.mp3")
 				} else if packet.Type == LEAVE_MSG {
-					// Play the audio stream
-					streamer2.Seek(0) // Reset streamer position to the beginning
-
-					// Play the audio stream
-					speaker.Play(streamer2)
-
-					<-time.After(time.Duration(streamer2.Len()))
-					// go play_sound("leaving.mp3")
+					go play_sound("leaving.mp3")
 				} else {
-					// Play the audio stream
-					streamer3.Seek(0) // Reset streamer position to the beginning
-
-					// Play the audio stream
-					speaker.Play(streamer3)
-
-					<-time.After(time.Duration(streamer3.Len()))
-					// go play_sound("receive.mp3")
+					go play_sound("receive.mp3")
 				}
 
 				// reprinting updated chat strand
@@ -2620,10 +2554,10 @@ func play_sound(file_path string) {
     }
 
 	// Initialize the speaker with the format of the audio
-    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/8))
 
 	// Play the audio stream
 	speaker.Play(streamer)
 
-	<-time.After(time.Duration(streamer.Len()))
+	time.Sleep(2 * time.Second)
 }
