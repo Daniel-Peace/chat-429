@@ -96,12 +96,13 @@ const (
 	ACCEPT          = iota // 0	Used to indicate a name or password was accepted
 	DENY                   // 1	Used to indicate a name or password was denied
 	MESSAGE                // 2	Used to send a standard message to a channel
-	CHAT_STATUS_MSG        // 3 Used to send a joining or leaving message to a chat
-	REGISTRATION           // 4	Used to send a username or password for registering a user
-	LOGIN                  // 5	Used to send a username or password for loggin in
-	MENU_OPTION            // 6	Used to send menu options
-	CLOSE                  // 7 Used to close a function if the state changes of the client
-	ESC					   // 8 used when a user uses escape to go back
+	JOIN_MSG        	   // 3 Used to send a joining message to a chat
+	LEAVE_MSG        	   // 4 Used to send a leaving message to a chat
+	REGISTRATION           // 5	Used to send a username or password for registering a user
+	LOGIN                  // 6	Used to send a username or password for loggin in
+	MENU_OPTION            // 7	Used to send menu options
+	CLOSE                  // 8 Used to close a function if the state changes of the client
+	ESC					   // 9 used when a user uses escape to go back
 )
 
 // user roles
@@ -1008,7 +1009,7 @@ func message(client Client) {
 		}
 
 		// checking if the packet has the expected type
-		if packet.Type != MESSAGE && packet.Type != CHAT_STATUS_MSG {
+		if packet.Type != MESSAGE && packet.Type != JOIN_MSG && packet.Type != LEAVE_MSG {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
@@ -1869,7 +1870,7 @@ func join_channel(client Client, channel_id int) {
 	client.Current_channel = channel_id
 	active_clients_mutex.Unlock()
 	msg := "\n" + client.Account_info.Username + " has joined the chat\n" + time.Now().Format("3:04 PM") + "\n"
-	send_message(client, msg)
+	send_message(client, JOIN_MSG, msg)
 }
 
 /*
@@ -1893,7 +1894,7 @@ func leave_channel(client Client) bool {
 		if user == client.Id {
 
 			msg := "\n" + client.Account_info.Username + " has left the chat\n" + time.Now().Format("3:04 PM") + "\n"
-			send_message(client, msg)
+			send_message(client, LEAVE_MSG, msg)
 
 			if index+1 == len(channels[client.Current_channel].Users) {
 				if len(channels[client.Current_channel].Users) == 0 {
@@ -1915,9 +1916,16 @@ func leave_channel(client Client) bool {
 /*
  * This function sends a message to the channel that a client is currently in
  */
-func send_message(client Client, msg string) {
+func send_message(client Client, msg_type int, msg string) {
+	var packet Data_packet
+
+	if msg_type == JOIN_MSG {
+		packet = Data_packet{Type: JOIN_MSG, Data: []byte(msg)}
+	} else {
+		packet = Data_packet{Type: LEAVE_MSG, Data: []byte(msg)}
+	}
+
 	active_clients_mutex.Lock()
-	packet := Data_packet{Type: CHAT_STATUS_MSG, Data: []byte(msg)}
 	for _, user := range channels[client.Current_channel].Users {
 		if user != client.Id {
 			send_data_packet(packet, *active_clients[user])

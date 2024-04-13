@@ -117,12 +117,13 @@ const (
 	ACCEPT          = iota // 0	Used to indicate a name or password was accepted
 	DENY                   // 1	Used to indicate a name or password was denied
 	MESSAGE                // 2	Used to send a standard message to a channel
-	CHAT_STATUS_MSG        // 3 Used to send a joining or leaving message to a chat
-	REGISTRATION           // 4	Used to send a username or password for registering a user
-	LOGIN                  // 5	Used to send a username or password for loggin in
-	MENU_OPTION            // 6	Used to send menu options
-	CLOSE                  // 7 Used to close a function if the state changes of the client
-	ESC					   // 8 used when a user uses escape to go back
+	JOIN_MSG        	   // 3 Used to send a joining message to a chat
+	LEAVE_MSG        	   // 4 Used to send a leaving message to a chat
+	REGISTRATION           // 5	Used to send a username or password for registering a user
+	LOGIN                  // 6	Used to send a username or password for loggin in
+	MENU_OPTION            // 7	Used to send menu options
+	CLOSE                  // 8 Used to close a function if the state changes of the client
+	ESC					   // 9 used when a user uses escape to go back
 )
 
 // roles for the client
@@ -1469,21 +1470,6 @@ func message() {
 	var err_msg []byte
 	var packet Data_packet
 
-	f, err := os.Open("send.mp3")
-    if err != nil {
-        panic(err)
-    }
-    defer f.Close()
-
-	// Decode the MP3 data
-    streamer, format, err := mp3.Decode(f)
-    if err != nil {
-        panic(err)
-    }
-
-	// Initialize the speaker with the format of the audio
-    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-
 	// starting a go routine to handle inbound messages
 	go handle_inbound_msg(&input)
 
@@ -1493,9 +1479,6 @@ func message() {
 	}
 
 	for {
-
-		// Play the audio stream
-		streamer.Seek(0) // Reset streamer position to the beginning
 
 		input = nil
 		// clearing the terminal
@@ -1569,15 +1552,6 @@ func message() {
 		// adding new message to chat strand
 		chat_strand = append(chat_strand, packet)
 
-		// Play the audio stream
-		speaker.Play(streamer)
-
-		// // Calculate the duration of the stream based on the number of samples and sample rate
-		// duration := time.Duration(streamer.Len())
-
-		// // Sleep for the duration of the audio to let it play
-		// <-time.After(duration)
-
 		// sending message to server
 		send_data_packet(packet)
 
@@ -1592,25 +1566,53 @@ func message() {
  * This function is responcible for handling inbound messages
  */
 func handle_inbound_msg(input *[]byte) {
-
-	f, err := os.Open("receive.mp3")
-    if err != nil {
-        panic(err)
-    }
-    defer f.Close()
+	f1, err := os.Open("joining.mp3")
+	if err != nil {
+		panic(err)
+	}
+	defer f1.Close()
 
 	// Decode the MP3 data
-    streamer, format, err := mp3.Decode(f)
-    if err != nil {
-        panic(err)
-    }
+	streamer1, format, err := mp3.Decode(f1)
+	if err != nil {
+		panic(err)
+	}
 
 	// Initialize the speaker with the format of the audio
-    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
+	f2, err := os.Open("leaving.mp3")
+	if err != nil {
+		panic(err)
+	}
+	defer f2.Close()
+
+	// Decode the MP3 data
+	streamer2, format, err := mp3.Decode(f2)
+	if err != nil {
+		panic(err)
+	}
+
+	// Initialize the speaker with the format of the audio
+	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
+	f3, err := os.Open("receive.mp3")
+	if err != nil {
+		panic(err)
+	}
+	defer f3.Close()
+
+	// Decode the MP3 data
+	streamer3, format, err := mp3.Decode(f3)
+	if err != nil {
+		panic(err)
+	}
+
+	// Initialize the speaker with the format of the audio
+	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
 	// reading inbound messages
 	for {
-		// Play the audio stream
-		streamer.Seek(0) // Reset streamer position to the beginning
 
 		// reading packet
 		packet := read_data_packet()
@@ -1620,18 +1622,46 @@ func handle_inbound_msg(input *[]byte) {
 		}
 
 		// checking packet type
-		if packet.Type == MESSAGE || packet.Type == CHAT_STATUS_MSG {
+		if packet.Type == MESSAGE || packet.Type == JOIN_MSG || packet.Type == LEAVE_MSG {
 			// appending new message to chat strand
 			mutex_chat.Lock()
 			chat_strand = append(chat_strand, packet)
 			mutex_chat.Unlock()
-			
 
 			if client_status == MESSAGING {
+
+				if packet.Type == JOIN_MSG {
+
+					// Play the audio stream
+					streamer1.Seek(0) // Reset streamer position to the beginning
+
+					// Play the audio stream
+					speaker.Play(streamer1)
+
+					<-time.After(time.Duration(streamer1.Len()))
+					// go play_sound("joining.mp3")
+				} else if packet.Type == LEAVE_MSG {
+					// Play the audio stream
+					streamer2.Seek(0) // Reset streamer position to the beginning
+
+					// Play the audio stream
+					speaker.Play(streamer2)
+
+					<-time.After(time.Duration(streamer2.Len()))
+					// go play_sound("leaving.mp3")
+				} else {
+					// Play the audio stream
+					streamer3.Seek(0) // Reset streamer position to the beginning
+
+					// Play the audio stream
+					speaker.Play(streamer3)
+
+					<-time.After(time.Duration(streamer3.Len()))
+					// go play_sound("receive.mp3")
+				}
+
 				// reprinting updated chat strand
 				print_chat_strand(*input, nil)
-				// Play the audio stream
-				speaker.Play(streamer)
 			}
 		}
 	}
@@ -1695,7 +1725,7 @@ func print_chat_strand(input []byte, err_msg []byte) {
 		// checking if the chat strand is empty
 		if chat_strand != nil {
 
-			if packet.Type == CHAT_STATUS_MSG {
+			if packet.Type == JOIN_MSG || packet.Type == LEAVE_MSG {
 				status_message := YELLOW + string(packet.Data) + RESET
 				fmt.Println(status_message)
 				continue
@@ -2574,4 +2604,26 @@ func display_admin_commands() {
 	fmt.Println(" - /add-mod <username>\t\t\tGives a user the role moderator")
 	fmt.Print("\n")
 	fmt.Println(" - /rm-mod <username>\t\t\tRemoves the moderator role from a user")
+}
+
+func play_sound(file_path string) {
+	f, err := os.Open(file_path)
+    if err != nil {
+        panic(err)
+    }
+    defer f.Close()
+
+	// Decode the MP3 data
+    streamer, format, err := mp3.Decode(f)
+    if err != nil {
+        panic(err)
+    }
+
+	// Initialize the speaker with the format of the audio
+    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+
+	// Play the audio stream
+	speaker.Play(streamer)
+
+	<-time.After(time.Duration(streamer.Len()))
 }
