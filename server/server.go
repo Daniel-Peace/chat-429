@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -100,6 +101,7 @@ const (
 	LOGIN                  // 5	Used to send a username or password for loggin in
 	MENU_OPTION            // 6	Used to send menu options
 	CLOSE                  // 7 Used to close a function if the state changes of the client
+	ESC					   // 8 used when a user uses escape to go back
 )
 
 // user roles
@@ -146,16 +148,20 @@ type Data_packet struct {
 
 // struct for holding a command packet
 type Command_packet struct {
-	Type      int
-	Username  string
-	Arguments []byte
+	Type      	int
+	Username  	string
+	Arguments 	[]byte
+	Successful	bool
+	Message 	[]byte
 }
 
 // struct for holding a parsed command
 type Parsed_command struct {
-	Type     int
-	Username string
-	Args     []string
+	Type     	int
+	Username 	string
+	Args     	[]string
+	Successful	bool
+	Message 	[]byte
 }
 
 type Channel struct {
@@ -712,6 +718,11 @@ func register_client(client Client) {
 			return
 		}
 
+		if packet.Type == ESC {
+			update_client_state(client, CHOOSING_SIGN_IN_OPT)
+			return
+		}
+
 		// checking if the packet has the expected type
 		if packet.Type != REGISTRATION {
 			custom_error_exit(OUT_OF_SYNC)
@@ -745,6 +756,15 @@ func register_client(client Client) {
 
 		// checking if the client has changed state and this function needs to return
 		if packet.Type == CLOSE {
+			return
+		}
+
+		if packet.Type == ESC {
+			update_client_state(client, CHOOSING_SIGN_IN_OPT)
+			active_clients_mutex.Lock()
+			active_clients[client.Id].Account_info.Username = ""
+			active_clients_mutex.Unlock()
+			client.Account_info.Username = ""
 			return
 		}
 
@@ -872,6 +892,11 @@ func login(client Client) {
 			return
 		}
 
+		if packet.Type == ESC {
+			update_client_state(client, CHOOSING_SIGN_IN_OPT)
+			return
+		}
+
 		// checking if the packet has the expected type
 		if packet.Type != LOGIN {
 			custom_error_exit(OUT_OF_SYNC)
@@ -918,6 +943,14 @@ func login(client Client) {
 
 		// checking if the client has changed state and this function needs to return
 		if packet.Type == CLOSE {
+			return
+		}
+
+		if packet.Type == ESC {
+			update_client_state(client, CHOOSING_SIGN_IN_OPT)
+			active_clients_mutex.Lock()
+			active_clients[client.Id].Account_info.Username = ""
+			active_clients_mutex.Unlock()
 			return
 		}
 
@@ -1150,7 +1183,7 @@ func read_command_packet(client Client) Command_packet {
 	var packet Command_packet
 
 	if amount_read == -1 {
-		packet.Type = -1
+		packet.Type = CLOSE
 		return packet
 	}
 
@@ -1171,7 +1204,22 @@ func read_command_packet(client Client) Command_packet {
 func write_to_connection(connection net.Conn, data []byte) {
 	_, err := connection.Write(data)
 	if err != nil {
-		error_exit(err)
+		fmt.Println("system: Failed to write to socket")
+		if errors.Is(err, io.EOF) {
+            // Socket gracefully closed by the other end
+            return 
+        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
+            // Socket closed or invalid file descriptor
+            return
+        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
+            // Another way to check for EOF wrapped in net.OpError
+            return
+        } else if errors.Is(err, io.ErrClosedPipe) {
+            // Closed pipe
+            return
+        } else {
+			error_exit(err)
+		}
 	}
 }
 
@@ -1183,11 +1231,22 @@ func read_from_connection(connection net.Conn) ([]byte, int) {
 	data := make([]byte, MAX_PACKET_SIZE)
 	amount_read, err := connection.Read(data)
 	if err != nil {
-		if err == io.EOF {
-			fmt.Println("system: Client closed connection")
-			return nil, -1
+		fmt.Println("system: Failed to read from socket")
+		if errors.Is(err, io.EOF) {
+            // Socket gracefully closed by the other end
+            return nil, -1
+        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
+            // Socket closed or invalid file descriptor
+            return nil, -1
+        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
+            // Another way to check for EOF wrapped in net.OpError
+            return nil, -1
+        } else if errors.Is(err, io.ErrClosedPipe) {
+            // Closed pipe
+            return nil, -1
+        } else {
+			error_exit(err)
 		}
-		error_exit(err)
 	}
 	return data, amount_read
 }
@@ -1317,6 +1376,8 @@ func parse_command(command_packet Command_packet) Parsed_command {
 	var command Parsed_command
 	command.Type = command_packet.Type
 	command.Username = command_packet.Username
+	command.Successful = command_packet.Successful
+	command.Message = command_packet.Message
 
 	// checking if the command had arguments
 	if len(command_packet.Arguments) > 0 {
@@ -1388,20 +1449,20 @@ func exit_command(client Client) {
 	// udpating client status to quitting
 	update_client_state(client, QUITTING)
 
-	// informing client to send data packet to siganl main client routine to end
-	cpack := Command_packet{Type: EXIT, Username: client.Account_info.Username, Arguments: []byte("READY")}
-	send_command_packet(cpack, client)
+	// // informing client to send data packet to siganl main client routine to end
+	// cpack := Command_packet{Type: EXIT, Username: client.Account_info.Username, Arguments: []byte("READY")}
+	// send_command_packet(cpack, client)
 
-	// waiting for ack that close packet was sent
-	cpack = read_command_packet(client)
-	if cpack.Type != EXIT || string(cpack.Arguments) != "CLOSE_SENT" {
-		custom_error_exit(UNKNOWN)
-	}
+	// // waiting for ack that close packet was sent
+	// cpack = read_command_packet(client)
+	// if cpack.Type != EXIT || string(cpack.Arguments) != "CLOSE_SENT" {
+	// 	custom_error_exit(UNKNOWN)
+	// }
 
-	cpack.Arguments = []byte("CLOSING")
-	send_command_packet(cpack, client)
+	// cpack.Arguments = []byte("CLOSING")
+	// send_command_packet(cpack, client)
 
-	time.Sleep(2 * time.Second)
+	// time.Sleep(2 * time.Second)
 
 	sub_client(client)
 }
@@ -1420,14 +1481,43 @@ func create_command(client Client, command Parsed_command) {
 
 	// checking if client is in a state to enter this command
 	if client.Account_info.Role <= PUBLIC {
-		cpack.Arguments = []byte("You don't have permission to use this command")
+		cpack.Message = []byte("You don't have permission to use this command")
+		cpack.Arguments = nil
 	} else if len(command.Args) < 1 {
-		cpack.Arguments = []byte("Not enough arguments")
+		cpack.Message = []byte("Not enough arguments")
+		cpack.Arguments = nil
 	} else if len(command.Args) > 1 {
-		cpack.Arguments = []byte("Too many arguments")
+		cpack.Message = []byte("Too many arguments")
+		cpack.Arguments = nil
 	} else {
-		cpack.Arguments = create_channel(command)
+		// creating channel
+		var successful bool
+		cpack.Message, successful = create_channel(command)
+
+		// creating args from channel list
+		if successful {
+			var channel_list strings.Builder
+			channels_mutex.Lock()
+			for index, channel := range channels {
+				if channel.Id != -1 {
+					if index != 0 {
+						channel_list.WriteString(" ")
+					}
+					channel_list.WriteString(string(channel.Topic))
+				}
+			}
+			channels_mutex.Unlock()
+
+			cpack.Arguments = []byte(channel_list.String())
+
+			cpack.Successful = true
+		} else {
+			cpack.Arguments = nil 
+			cpack.Successful = false
+		}
 	}
+
+
 
 	// sending packet
 	send_command_packet(cpack, client)
@@ -1673,14 +1763,14 @@ func clear_terminal() {
 /*
  * This function creates a channel
  */
-func create_channel(command Parsed_command) []byte {
+func create_channel(command Parsed_command)([]byte, bool ) {
 	// creating channel struct
 	channel := Channel{Topic: []byte(command.Args[0]), Users: nil}
 
 	// finding free slot for channel
 	free_slot_index := find_free_channel_slot()
 	if free_slot_index == -1 {
-		return []byte("Maximum number of channels already exist")
+		return []byte("Maximum number of channels already exist"), false
 	}
 
 	// adding channel to array
@@ -1689,7 +1779,7 @@ func create_channel(command Parsed_command) []byte {
 	channels[free_slot_index] = &channel
 
 	// returning success message
-	return []byte("Successfull added a channel with topic #" + command.Args[0])
+	return []byte("Successfull added a channel with topic #" + command.Args[0]), true
 }
 
 /*

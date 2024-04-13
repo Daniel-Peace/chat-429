@@ -2,9 +2,10 @@ package main
 
 // imported packages
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -118,6 +119,7 @@ const (
 	LOGIN                  // 5	Used to send a username or password for loggin in
 	MENU_OPTION            // 6	Used to send menu options
 	CLOSE                  // 7 Used to close a function if the state changes of the client
+	ESC					   // 8 used when a user uses escape to go back
 )
 
 // roles for the client
@@ -147,8 +149,9 @@ type Command_packet struct {
 	Type 		int
 	Username 	string
 	Arguments 	[]byte
+	Successful	bool
+	Message 	[]byte
 }
-
 
 var (
 	client_status 	int
@@ -160,7 +163,8 @@ var (
 	current_channel []byte
 	command_socket 	net.Conn
 	data_socket 	net.Conn
-	
+
+	channels		[]string
 
 	chat_strand []Data_packet
 	mutex_chat  sync.Mutex
@@ -424,7 +428,22 @@ func read_data_packet() Data_packet {
 func write_to_connection(data []byte, connection net.Conn) {
 	_, err := connection.Write(data)
 	if err != nil {
-		error_exit(err)
+		fmt.Println("system: Failed to write to socket")
+		if errors.Is(err, io.EOF) {
+            // Socket gracefully closed by the other end
+            return
+        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
+            // Socket closed or invalid file descriptor
+            return
+        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
+            // Another way to check for EOF wrapped in net.OpError
+            return
+        } else if errors.Is(err, io.ErrClosedPipe) {
+            // Closed pipe
+            return
+        } else {
+			error_exit(err)
+		}
 	}
 }
 
@@ -435,7 +454,22 @@ func read_from_connection(connection net.Conn) ([]byte, int) {
 	data := make([]byte, MAX_PACKET_SIZE)
 	amount_read, err := connection.Read(data)
 	if err != nil {
-		error_exit(err)
+		fmt.Println("system: Failed to read from socket")
+		if errors.Is(err, io.EOF) {
+            // Socket gracefully closed by the other end
+            return nil, -1
+        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
+            // Socket closed or invalid file descriptor
+            return nil, -1
+        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
+            // Another way to check for EOF wrapped in net.OpError
+            return nil, -1
+        } else if errors.Is(err, io.ErrClosedPipe) {
+            // Closed pipe
+            return nil, -1
+        } else {
+			error_exit(err)
+		}
 	}
 	return data, amount_read
 }
@@ -724,59 +758,87 @@ func display_opt() {
  * This includes getting a username and password to create an account
  */
 func register_user() {
-	get_username_for_registration()
-	get_password_for_registration()
+	if !get_username_for_registration() {
+		return
+	}
+	
+	if !get_password_for_registration() {
+		return
+	}
 }
 
 /*
  * This function loops until it gets a valid username from the user
  */
-func get_username_for_registration()() {
+func get_username_for_registration() bool {
+	var packet Data_packet
+	var input []byte
+
 	// clearing terminal
 	clear_terminal()
 
-	// creating scanner
-	scanner := bufio.NewScanner(os.Stdin)
+	print_registration_username(string(input), nil)
 
-	// prompting user
-	fmt.Println(string(horizontal_line))
-	fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
-	fmt.Println("Username requirements:")
-	fmt.Println("- Must start with: \"A-Z\" or \"a-z\"")
-	fmt.Println("- Must end with: \"A-Z\", \"a-z\", or \"0-9\"")
-	fmt.Println("- May contain: \"A-Z\", \"a-z\", \"0-9\", \"-\", \"_\"")
-	fmt.Println("- Must be 5-20 characters long")
-	fmt.Println(string(horizontal_line))
-
-	// looping until user either picks a valid username or exits
-	var input string
 	for {
-		arrow := GREEN + "-> " + RESET
-		fmt.Print(arrow)
-
-		// getting input from user
-		if scanner.Scan() {
-			// storing scanned text in variable
-			input = scanner.Text()
+		if err := keyboard.Open(); err != nil {
+			panic(err)
 		}
-		fmt.Println(string(horizontal_line))
 
-		if is_comand(input) {
-			handle_command(input)
+		// getting user input
+		for {
+			// getting key press
+			char, key, err := keyboard.GetSingleKey()
+			if err != nil {
+				panic(err)
+			}
+
+			// checking if enter key was pressed
+			if key == keyboard.KeyEnter {
+				break
+			} else if key == keyboard.KeyBackspace || key == keyboard.KeyBackspace2 {
+				if len(input) > 0 {
+					input = input[:len(input) - 1]
+				}
+			} else if key == keyboard.KeyCtrlC{
+				var cpack Command_packet
+				cpack.Type = EXIT
+				cpack.Username = ""
+				cpack.Arguments = []byte("client disconnecting")
+				client_status = QUITTING
+				exit_command(cpack)
+			} else if key == keyboard.KeySpace {
+				input = append(input, ' ')
+			} else if key == keyboard.KeyTab || key == keyboard.KeyArrowLeft || key == keyboard.KeyArrowRight || key == keyboard.KeyArrowDown || key == keyboard.KeyArrowUp {
+				continue
+			} else if key == keyboard.KeyEsc {
+				client_status = CHOOSING_SIGN_IN_OPT
+				username = ""
+				var dpack Data_packet
+				dpack.Type = ESC
+				dpack.Data = []byte("User hit ESC")
+				send_data_packet(dpack)
+				return false
+			} else {
+				input = append(input, byte(char))
+			}
+			// clearing the terminal
 			clear_terminal()
-			fmt.Println(string(horizontal_line))
-			fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
-			fmt.Println("Username requirements:")
-			fmt.Println("- Must start with: \"A-Z\" or \"a-z\"")
-			fmt.Println("- Must end with: \"A-Z\", \"a-z\", or \"0-9\"")
-			fmt.Println("- May contain: \"A-Z\", \"a-z\", \"0-9\", \"-\", \"_\"")
-			fmt.Println("- Must be 5-20 characters long")
-			fmt.Println(string(horizontal_line))
+
+			// printing login screen
+			print_registration_username(string(input), nil)
+		}
+	
+		// checking if the user entered a command
+		if is_comand(string(input)) {
+			msg := handle_command(string(input))
+			input = nil
+			clear_terminal()
+			print_registration_username(string(input), msg)
 			continue
 		}
 
 		// declaring and initializing packet
-		packet := Data_packet{Type: REGISTRATION, Data: []byte(input)}
+		packet = Data_packet{Type: REGISTRATION, Data: []byte(input)}
 
 		// sending packet containging username
 		send_data_packet(packet)
@@ -784,91 +846,275 @@ func get_username_for_registration()() {
 		// waiting for response
 		packet = read_data_packet()
 
+
 		// checking response from server
-		if packet.Type == DENY {
-			// printing response
-			fmt.Printf("system: %s\n", string(packet.Data))
-			fmt.Println(string(horizontal_line))
-		} else if packet.Type == ACCEPT {
-			// printing response
-			fmt.Printf("system: %s\n", string(packet.Data))
-			fmt.Println(string(horizontal_line))
-
-			// setting global value for username
-			username = input
-
+		// checking if username was accepted
+		if packet.Type == ACCEPT {
 			break
+		} else {
+			print_registration_username(string(input), packet.Data)
 		}
 	}
+	return true
  }
 
  /*
  * This function loops until it gets a valid password from the user
  */
-func get_password_for_registration()() {
+func get_password_for_registration() bool {
+	var packet Data_packet
+	var input []byte
+
 	// clearing terminal
 	clear_terminal()
 
-	// creating scanner
-	scanner := bufio.NewScanner(os.Stdin)
+	print_registration_password(string(input), nil)
 
-	// prompting user
-	fmt.Println(string(horizontal_line))
-	fmt.Println("Please enter a passowrd")
-	fmt.Println("Password requirements:")
-	fmt.Println("- Must contain at least one captial letter")
-	fmt.Println("- Must contain at least one number")
-	fmt.Println("- Must contain at least one special character (!, @, #, $, %, ?)")
-	fmt.Println("- Must be at least 7 characters long")
-	fmt.Println(string(horizontal_line))
-
-	// looping until user enters a valid password or exits
-	var input string
 	for {
-		arrow := GREEN + "-> " + RESET
-		fmt.Print(arrow)
-
-		// getting input from user
-		if scanner.Scan() {
-
-			// storing scanned text in variable
-			input = scanner.Text()
+		if err := keyboard.Open(); err != nil {
+			panic(err)
 		}
-		fmt.Println(string(horizontal_line))
 
-		if is_comand(input) {
-			handle_command(input)
+		// getting user input
+		for {
+			// getting key press
+			char, key, err := keyboard.GetSingleKey()
+			if err != nil {
+				panic(err)
+			}
+
+			// checking if enter key was pressed
+			if key == keyboard.KeyEnter {
+				break
+			} else if key == keyboard.KeyBackspace || key == keyboard.KeyBackspace2 {
+				if len(input) > 0 {
+					input = input[:len(input) - 1]
+				}
+			} else if key == keyboard.KeyCtrlC{
+				var cpack Command_packet
+				cpack.Type = EXIT
+				cpack.Username = ""
+				cpack.Arguments = []byte("client disconnecting")
+				client_status = QUITTING
+				exit_command(cpack)
+			} else if key == keyboard.KeySpace {
+				input = append(input, ' ')
+			} else if key == keyboard.KeyTab || key == keyboard.KeyArrowLeft || key == keyboard.KeyArrowRight || key == keyboard.KeyArrowDown || key == keyboard.KeyArrowUp {
+				continue
+			} else if key == keyboard.KeyEsc {
+				client_status = CHOOSING_SIGN_IN_OPT
+				username = ""
+				var dpack Data_packet
+				dpack.Type = ESC
+				dpack.Data = []byte("User hit ESC")
+				send_data_packet(dpack)
+				return false
+			} else {
+				input = append(input, byte(char))
+			}
+			// clearing the terminal
 			clear_terminal()
-			fmt.Println(string(horizontal_line))
-			fmt.Println("Please enter a passowrd")
-			fmt.Println("Password requirements:")
-			fmt.Println("- Must contain at least one captial letter")
-			fmt.Println("- Must contain at least one number")
-			fmt.Println("- Must contain at least one special character (!, @, #, $, %, ?)")
-			fmt.Println("- Must be at least 7 characters long")
-			fmt.Println(string(horizontal_line))
+
+			// printing login screen
+			print_registration_password(string(input), nil)
+		}
+	
+		// checking if the user entered a command
+		if is_comand(string(input)) {
+			msg := handle_command(string(input))
+			input = nil
+			clear_terminal()
+			print_registration_password(string(input), msg)
 			continue
 		}
 
 		// declaring and initializing packet
-		packet := Data_packet{Type: REGISTRATION, Data: []byte(input)}
+		packet = Data_packet{Type: REGISTRATION, Data: []byte(input)}
 
-		// sending password packet
+		// sending packet containging username
 		send_data_packet(packet)
 
-		// waiting on response
+		// waiting for response
 		packet = read_data_packet()
 
+
 		// checking response from server
-		if packet.Type == DENY {
-			fmt.Printf("system: %s\n", string(packet.Data))
-			fmt.Println(string(horizontal_line))
-		} else if packet.Type == ACCEPT {
-			fmt.Printf("system: %s\n", string(packet.Data))
-			fmt.Println(string(horizontal_line))
+		// checking if username was accepted
+		if packet.Type == ACCEPT {
 			client_status = IN_MAIN_MENU
 			break
+		} else {
+			print_registration_password(string(input), packet.Data)
 		}
+	}
+
+	return true
+}
+
+/*
+ * prints login screen with username prompt
+ */
+ func print_registration_username(input string, error []byte) {
+	var bar []byte
+	var padding []byte
+
+	for i := 0; i < terminal_width; i++ {
+		bar = append(horizontal_line, '-')
+	}
+
+	for i := 0; i < terminal_width; i++ {
+		padding = append(padding, ' ')
+	}
+
+	if error == nil {
+		fmt.Println(string(horizontal_line))
+		fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
+		fmt.Println("Username requirements:")
+		fmt.Println("- Must start with: \"A-Z\" or \"a-z\"")
+		fmt.Println("- Must end with: \"A-Z\", \"a-z\", or \"0-9\"")
+		fmt.Println("- May contain: \"A-Z\", \"a-z\", \"0-9\", \"-\", \"_\"")
+		fmt.Println("- Must be 5-20 characters long")
+		fmt.Println(string(horizontal_line))
+		fmt.Print(string(vertical_space[:terminal_height/2-10]))
+		if len(input) > 20 {
+			line_1 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			line_2 := "| " + input + " |"
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		} else {
+			line_1 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			var line_2 string
+			if len(input) % 2 == 0 {
+				line_2 = "|" + string(padding[:(22 - len(input))/2]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			} else {
+				line_2 = "|" + string(padding[:(22 - len(input))/2 + 1]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			}
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		}
+		fmt.Print(string(vertical_space[:terminal_height/2-1]))
+	} else {
+		fmt.Println(string(horizontal_line))
+		fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
+		fmt.Println("Username requirements:")
+		fmt.Println("- Must start with: \"A-Z\" or \"a-z\"")
+		fmt.Println("- Must end with: \"A-Z\", \"a-z\", or \"0-9\"")
+		fmt.Println("- May contain: \"A-Z\", \"a-z\", \"0-9\", \"-\", \"_\"")
+		fmt.Println("- Must be 5-20 characters long")
+		fmt.Println(string(horizontal_line))
+		fmt.Print(string(vertical_space[:terminal_height/2-10]))
+		if len(input) > 20 {
+			line_1 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			line_2 := "| " + input + " |"
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		} else {
+			line_1 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			var line_2 string
+			if len(input) % 2 == 0 {
+				line_2 = "|" + string(padding[:(22 - len(input))/2]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			} else {
+				line_2 = "|" + string(padding[:(22 - len(input))/2 + 1]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			}
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		}
+		line_4 := "         " + RED + string(error) + RESET
+		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
+	}
+}
+
+/*
+ * prints login screen with password prompt
+ */
+func print_registration_password(input string, error []byte) {
+	var bar []byte
+	var padding []byte
+
+	for i := 0; i < terminal_width; i++ {
+		bar = append(horizontal_line, '-')
+	}
+
+	for i := 0; i < terminal_width; i++ {
+		padding = append(padding, ' ')
+	}
+
+	if error == nil {
+		// prompting user
+		fmt.Println(string(horizontal_line))
+		fmt.Println("Please enter a passowrd")
+		fmt.Println("Password requirements:")
+		fmt.Println("- Must contain at least one captial letter")
+		fmt.Println("- Must contain at least one number")
+		fmt.Println("- Must contain at least one special character (!, @, #, $, %, ?)")
+		fmt.Println("- Must be at least 7 characters long")
+		fmt.Println(string(horizontal_line))
+		fmt.Print(string(vertical_space[:terminal_height/2-11]))
+
+		if len(input) > 20 {
+			line_1 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			line_2 := "| " + input + " |"
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		} else {
+			line_1 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			var line_2 string
+			if len(input) % 2 == 0 {
+				line_2 = "|" + string(padding[:(22 - len(input))/2]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			} else {
+				line_2 = "|" + string(padding[:(22 - len(input))/2 + 1]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			}
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		}
+		fmt.Print(string(vertical_space[:terminal_height/2]))
+	} else {
+		fmt.Println(string(horizontal_line))
+		fmt.Println("Please enter a passowrd")
+		fmt.Println("Password requirements:")
+		fmt.Println("- Must contain at least one captial letter")
+		fmt.Println("- Must contain at least one number")
+		fmt.Println("- Must contain at least one special character (!, @, #, $, %, ?)")
+		fmt.Println("- Must be at least 7 characters long")
+		fmt.Println(string(horizontal_line))
+		fmt.Print(string(vertical_space[:terminal_height/2 - 11]))
+
+		if len(input) > 20 {
+			line_1 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			line_2 := "| " + input + " |"
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:len(input) + 4])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		} else {
+			line_1 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+			var line_2 string
+			if len(input) % 2 == 0 {
+				line_2 = "|" + string(padding[:(22 - len(input))/2]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			} else {
+				line_2 = "|" + string(padding[:(22 - len(input))/2 + 1]) + input + string(padding[:(22 - len(input))/2]) + "|"
+			}
+			fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+			line_3 := string(bar[:24])
+			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+		}
+		line_4 := "         " + RED + string(error) + RESET
+		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
+		fmt.Print(string(vertical_space[:terminal_height/2-1]))
 	}
 }
 
@@ -916,6 +1162,16 @@ func login() {
 				exit_command(cpack)
 			} else if key == keyboard.KeySpace {
 				input = append(input, ' ')
+			} else if key == keyboard.KeyTab || key == keyboard.KeyArrowLeft || key == keyboard.KeyArrowRight || key == keyboard.KeyArrowDown || key == keyboard.KeyArrowUp {
+				continue
+			} else if key == keyboard.KeyEsc {
+				client_status = CHOOSING_SIGN_IN_OPT
+				username = ""
+				var dpack Data_packet
+				dpack.Type = ESC
+				dpack.Data = []byte("User hit ESC")
+				send_data_packet(dpack)
+				return
 			} else {
 				input = append(input, byte(char))
 			}
@@ -985,9 +1241,6 @@ func login() {
 			if err != nil {
 				panic(err)
 			}
-	
-			// clearing the terminal
-			clear_terminal()
 
 			// checking if enter key was pressed
 			if key == keyboard.KeyEnter {
@@ -1004,13 +1257,26 @@ func login() {
 				cpack.Arguments = []byte("client disconnecting")
 				client_status = QUITTING
 				exit_command(cpack)
+			} else if key == keyboard.KeyTab || key == keyboard.KeyArrowLeft || key == keyboard.KeyArrowRight || key == keyboard.KeyArrowDown || key == keyboard.KeyArrowUp {
+				continue
 			} else if key == keyboard.KeySpace {
 				input = append(input, ' ')
 				password_mask = append(password_mask, '*')
+			} else if key == keyboard.KeyEsc {
+				client_status = CHOOSING_SIGN_IN_OPT
+				username = ""
+				var dpack Data_packet
+				dpack.Type = ESC
+				dpack.Data = []byte("User hit ESC")
+				send_data_packet(dpack)
+				return
 			} else {
 				input = append(input, byte(char))
 				password_mask = append(password_mask, '*')
 			}
+
+			// clearing terminal
+			clear_terminal()
 
 			// print login screen
 			print_login_password(string(password_mask), nil)
@@ -1200,7 +1466,7 @@ func message() {
 	var err_msg []byte
 	var packet Data_packet
 	// starting a go routine to handle inbound messages
-	go handle_inbound_msg()
+	go handle_inbound_msg(&input)
 
 	// scanning user inputs and sending messages
 	if err := keyboard.Open(); err != nil {
@@ -1238,6 +1504,15 @@ func message() {
 				cpack.Arguments = []byte("client disconnecting")
 				client_status = QUITTING
 				exit_command(cpack)
+			} else if key == keyboard.KeyTab || key == keyboard.KeyArrowLeft || key == keyboard.KeyArrowRight || key == keyboard.KeyArrowDown || key == keyboard.KeyArrowUp {
+				continue
+			} else if key == keyboard.KeyEsc {
+				
+				var cpack Command_packet
+				cpack.Type = MAIN
+				cpack.Username = username
+				main_command(cpack)
+				return
 			} else if key == keyboard.KeySpace {
 				input = append(input, ' ')
 			} else {
@@ -1251,14 +1526,6 @@ func message() {
 			print_chat_strand(input, err_msg)
 		}
 
-
-
-		// if scanner.Scan() {
-		// 	// storing scanned text in variable
-		// 	input = scanner.Text()
-		// }
-		// fmt.Println(string(horizontal_line))
-
 		// checks if a command was entered and executes it if it was
 		if is_comand(string(input)) {
 			err_msg = handle_command(string(input))
@@ -1271,7 +1538,6 @@ func message() {
 			continue
 		}
 		
-
 		// declaring and initializing packet
 		packet.Type = MESSAGE
 		packet.Data = []byte(input)
@@ -1293,7 +1559,7 @@ func message() {
 /*
  * This function is responcible for handling inbound messages
  */
-func handle_inbound_msg() {
+func handle_inbound_msg(input *[]byte) {
 	// reading inbound messages
 	for {
 		// reading packet
@@ -1312,7 +1578,7 @@ func handle_inbound_msg() {
 
 			if client_status == MESSAGING {
 				// reprinting updated chat strand
-				print_chat_strand(nil, nil)
+				print_chat_strand(*input, nil)
 			}
 		}
 	}
@@ -1570,7 +1836,6 @@ func custom_error_exit(err int) {
  * This function handles main menu functionality
  */
 func main_menu() {
-	fmt.Println("Made it to main menu")
 	// clearing terminal
 	clear_terminal()
 
@@ -1587,7 +1852,7 @@ func main_menu() {
 	}
 
 	// parsing the choice into an array of strings
-	channels := strings.Split(string(data_packet.Data), " ")
+	channels = strings.Split(string(data_packet.Data), " ")
 
 	// appending QUIT option to menu
 	channels = append(channels, "QUIT")
@@ -1609,8 +1874,10 @@ func main_menu() {
 
 	// looping until a user makes a selection
 	for {
+		var input []byte
+		var error []byte
 		// getting key press
-		_, key, err := keyboard.GetSingleKey()
+		char, key, err := keyboard.GetSingleKey()
 		if err != nil {
 			panic(err)
 		}
@@ -1624,6 +1891,60 @@ func main_menu() {
 			current_choice++
 			current_choice = current_choice % len(channels)
 			choice_channel <- current_choice
+		} else if char == '/'{
+			choice_channel <- -1
+			input = append(input, byte(char))
+
+			clear_terminal()
+			display_main_menu_with_command(channels, input, error)
+
+			for {
+				// getting key press
+				char, key, err := keyboard.GetSingleKey()
+				if err != nil {
+					panic(err)
+				}
+
+				error = nil
+
+				// checking if enter key was pressed
+				if key == keyboard.KeyEnter {
+					if is_comand(string(input)) {
+						error = handle_command(string(input))
+						input = nil
+					} else {
+						error = []byte("Not a valid command")
+					}
+				} else if key == keyboard.KeyBackspace || key == keyboard.KeyBackspace2 {
+					if len(input) > 0 {
+						input = input[:len(input) - 1]
+					} else {
+						// creating go routine to handle displaying the menu
+						go display_main_menu(choice_channel, channels)
+						break
+					}
+				} else if key == keyboard.KeyCtrlC{
+					var cpack Command_packet
+					cpack.Type = EXIT
+					cpack.Username = ""
+					cpack.Arguments = []byte("client disconnecting")
+					client_status = QUITTING
+					exit_command(cpack)
+				} else if key == keyboard.KeySpace {
+					input = append(input, ' ')
+				} else if key == keyboard.KeyTab {
+					continue
+				} else if key == keyboard.KeyEsc {
+					// creating go routine to handle displaying the menu
+					go display_main_menu(choice_channel, channels)
+					break
+				} else {
+					input = append(input, byte(char))
+				}
+
+				clear_terminal()
+				display_main_menu_with_command(channels, input, error)
+			}
 		}
 
 		// Break the loop if Enter key is pressed
@@ -1697,6 +2018,44 @@ func display_main_menu(choice chan int, channels []string) {
 			time.Sleep(30 * time.Millisecond)
 		}
 	}
+}
+
+func display_main_menu_with_command(channels []string, input []byte, err []byte) {
+	var bar []byte
+	var padding []byte
+
+	for i := 0; i < terminal_width; i++ {
+		bar = append(horizontal_line, '-')
+	}
+
+	for i := 0; i < terminal_width; i++ {
+		padding = append(padding, ' ')
+	}
+
+	print_main_menu_without_choice(channels)
+	if len(input) > 20 {
+		line_1 := string(bar[:len(input) + 4])
+		fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+		line_2 := "| " + string(input) + " |"
+		fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+		line_3 := string(bar[:len(input) + 4])
+		fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+	} else {
+		line_1 := string(bar[:24])
+		fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
+		var line_2 string
+		if len(input) % 2 == 0 {
+			line_2 = "|" + string(padding[:(22 - len(input))/2]) + string(input) + string(padding[:(22 - len(input))/2]) + "|"
+		} else {
+			line_2 = "|" + string(padding[:(22 - len(input))/2 + 1]) + string(input) + string(padding[:(22 - len(input))/2]) + "|"
+		}
+		fmt.Printf("%*s\n", ((terminal_width-len(line_2))/2)+len(line_2), line_2)
+		line_3 := string(bar[:24])
+		fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
+	}
+
+	line_4 := YELLOW + "         " + string(err) + RESET
+	fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
 }
 
 /*
@@ -1839,26 +2198,26 @@ func exit_command(cpack Command_packet) []byte {
 	// send command to server
 	send_command_packet(cpack)
 
-	// checking if the server changed states
-	cpack = read_command_packet()
-	if cpack.Type != EXIT || string(cpack.Arguments) != "READY" {
-		custom_error_exit(UNKNOWN)
-	}
+	// // checking if the server changed states
+	// cpack = read_command_packet()
+	// if cpack.Type != EXIT || string(cpack.Arguments) != "READY" {
+	// 	custom_error_exit(UNKNOWN)
+	// }
 
-	// closing function on server side that is using data_socket
-	dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
-	send_data_packet(dpack)
+	// // closing function on server side that is using data_socket
+	// dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
+	// send_data_packet(dpack)
 
-	// creating exit packet
-	cpack.Type = EXIT
-	cpack.Username = username
-	cpack.Arguments = []byte("CLOSE_SENT")
+	// // creating exit packet
+	// cpack.Type = EXIT
+	// cpack.Username = username
+	// cpack.Arguments = []byte("CLOSE_SENT")
 
-	// sending packet to server
-	send_command_packet(cpack)
+	// // sending packet to server
+	// send_command_packet(cpack)
 
-	// reading from server
-	read_command_packet()
+	// // reading from server
+	// read_command_packet()
 
 	// shutting down client
 	shutdown()
@@ -1959,7 +2318,7 @@ func main_command(cpack Command_packet) []byte {
 /*
  * This function handles the create command
  */
- func create_command(cpack Command_packet) []byte {
+func create_command(cpack Command_packet) []byte {
 
 	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
 		return []byte("Command not availbale. Must sign in first.")
@@ -1972,7 +2331,18 @@ func main_command(cpack Command_packet) []byte {
 	if cpack.Type != CREATE {
 		custom_error_exit(OUT_OF_SYNC)
 	}
-	return cpack.Arguments
+
+	if cpack.Successful {
+		// parsing the choice into an array of strings
+		channels = strings.Split(string(cpack.Arguments), " ")
+
+		// appending QUIT option to menu
+		channels = append(channels, "QUIT")
+	}
+
+	
+
+	return cpack.Message
 }
 
 /*
@@ -1995,6 +2365,9 @@ func change_topic_command(cpack Command_packet) []byte {
 	return cpack.Arguments
 }
 
+/*
+ * This function handles giving the moderator role from a user
+ */
 func add_mod_command(cpack Command_packet) []byte {
 	// checking if user is signed in
 	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
@@ -2013,6 +2386,9 @@ func add_mod_command(cpack Command_packet) []byte {
 	return cpack.Arguments
 }
 
+/*
+ * This function handles removing the moderator role from a user
+ */
 func rm_mod_command(cpack Command_packet) []byte {
 	// checking if user is signed in
 	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
@@ -2031,6 +2407,9 @@ func rm_mod_command(cpack Command_packet) []byte {
 	return cpack.Arguments
 }
 
+/*
+ * This function hanels the ban-s command
+ */
 func ban_s_command(cpack Command_packet) []byte{
 	// checking if user is signed in
 	if client_status == CHOOSING_SIGN_IN_OPT || client_status == REGISTERING || client_status == LOGGING_IN {
