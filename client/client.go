@@ -26,8 +26,8 @@ import (
 const (
 	// client and server information
 	// SERVER_HOST = "localhost"
-	SERVER_HOST = "192.168.86.37"
-	CLIENT_HOST = "192.168.86.195"
+	SERVER_HOST = "localhost"
+	CLIENT_HOST = "localhost"
 	COMMAND_PORT = "7777"
 	DATA_PORT = "7778"
 	CONNECTION_TYPE = "tcp"
