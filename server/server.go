@@ -609,8 +609,6 @@ func serve_client_if_space(command_socket net.Conn) {
 	client := active_clients[index]
 	active_clients_mutex.Unlock()
 
-	
-
 	// starting go routine to serve client
 	go serve_client(*client)
 	fmt.Println("system: serving client")
@@ -704,6 +702,7 @@ func serve_client(client Client) {
 func choose_sign_in_opt(client Client) {
 	// reading packet from client
 	packet := read_data_packet(client)
+	fmt.Printf("system: Packet type %d\n", packet.Type)
 	fmt.Printf("system: Received menu option \"%s\" from client #%d\n", string(packet.Data), client.Id)
 
 	// checking if the client has changed state and this function needs to return
@@ -1089,7 +1088,7 @@ func name_is_exists(username string) (int, bool) {
 	}
 
 	// looping over active clients
-	for index ,current_user := range active_clients {
+	for index, current_user := range active_clients {
 		if current_user.Account_info.Username == username {
 			return index, true
 		}
@@ -1503,7 +1502,9 @@ func disconnect_client(client Client) {
 	if client.Current_channel > -1 {
 		leave_channel(client)
 	}
-	
+
+	time.Sleep(5 * time.Second)
+
 	sub_client(client)
 }
 
@@ -1731,7 +1732,7 @@ func rm_mod_command(client Client, command Parsed_command) {
 }
 
 /*
- * This function checks permmisions and requriemtns and then attmp to ban a user from 
+ * This function checks permmisions and requriemtns and then attmp to ban a user from
  */
 func ban_s_command(client Client, command Parsed_command) {
 	// updating client struct
@@ -1776,7 +1777,7 @@ func ban_s_command(client Client, command Parsed_command) {
 }
 
 /*
- * This function handles udpating the account to be banned 
+ * This function handles udpating the account to be banned
  */
 func ban_from_server(user_index int) {
 	registered_accounts_mutex.Lock()
