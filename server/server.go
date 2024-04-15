@@ -1500,9 +1500,10 @@ func disconnect_client(client Client) {
 	send_command_packet(cpack, client)
 
 	cpack = read_command_packet(client)
-
-	leave_channel(client)
-
+	if client.Current_channel > -1 {
+		leave_channel(client)
+	}
+	
 	sub_client(client)
 }
 
