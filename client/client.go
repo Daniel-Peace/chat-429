@@ -3,9 +3,7 @@ package main
 // imported packages
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -433,21 +431,6 @@ func write_to_connection(data []byte, connection net.Conn) {
 	_, err := connection.Write(data)
 	if err != nil {
 		fmt.Println("system: Failed to write to socket")
-		if errors.Is(err, io.EOF) {
-            // Socket gracefully closed by the other end
-            return
-        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
-            // Socket closed or invalid file descriptor
-            return
-        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
-            // Another way to check for EOF wrapped in net.OpError
-            return
-        } else if errors.Is(err, io.ErrClosedPipe) {
-            // Closed pipe
-            return
-        } else {
-			error_exit(err)
-		}
 	}
 }
 
@@ -459,21 +442,6 @@ func read_from_connection(connection net.Conn) ([]byte, int) {
 	amount_read, err := connection.Read(data)
 	if err != nil {
 		fmt.Println("system: Failed to read from socket")
-		if errors.Is(err, io.EOF) {
-            // Socket gracefully closed by the other end
-            return nil, -1
-        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
-            // Socket closed or invalid file descriptor
-            return nil, -1
-        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
-            // Another way to check for EOF wrapped in net.OpError
-            return nil, -1
-        } else if errors.Is(err, io.ErrClosedPipe) {
-            // Closed pipe
-            return nil, -1
-        } else {
-			error_exit(err)
-		}
 	}
 	return data, amount_read
 }
@@ -581,12 +549,12 @@ func choose_sign_in_opt() {
 			// packet to be sent to the server with the choice
 			if current_choice == 0 {
 				packet.Type = MENU_OPTION
-				packet.Data = []byte("login")
+				packet.Data = []byte("LOGIN")
 				client_status = LOGGING_IN
 				send_data_packet(packet)
 			} else if current_choice == 1 {
 				packet.Type = MENU_OPTION
-				packet.Data = []byte("register")
+				packet.Data = []byte("REGISTER")
 				client_status = REGISTERING
 				send_data_packet(packet)
 			} else if current_choice == 2 {
@@ -856,6 +824,7 @@ func get_username_for_registration() bool {
 		if packet.Type == ACCEPT {
 			break
 		} else {
+			go play_sound("error.mp3")
 			print_registration_username(string(input), packet.Data)
 		}
 	}
@@ -948,6 +917,7 @@ func get_password_for_registration() bool {
 			client_status = IN_MAIN_MENU
 			break
 		} else {
+			go play_sound("error.mp3")
 			print_registration_password(string(input), packet.Data)
 		}
 	}
@@ -1000,7 +970,7 @@ func get_password_for_registration() bool {
 			line_3 := string(bar[:24])
 			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
 		}
-		fmt.Print(string(vertical_space[:terminal_height/2-1]))
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
 	} else {
 		fmt.Println(string(horizontal_line))
 		fmt.Println("Please enter a username. (NOTE: This will be visible to all other users)")
@@ -1033,7 +1003,7 @@ func get_password_for_registration() bool {
 		}
 		line_4 := "         " + RED + string(error) + RESET
 		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
-		fmt.Print(string(vertical_space[:terminal_height/2-2]))
+		fmt.Print(string(vertical_space[:terminal_height/2-3]))
 	}
 }
 
@@ -1062,7 +1032,7 @@ func print_registration_password(input string, error []byte) {
 		fmt.Println("- Must contain at least one special character (!, @, #, $, %, ?)")
 		fmt.Println("- Must be at least 7 characters long")
 		fmt.Println(string(horizontal_line))
-		fmt.Print(string(vertical_space[:terminal_height/2-11]))
+		fmt.Print(string(vertical_space[:terminal_height/2-10]))
 
 		if len(input) > 20 {
 			line_1 := string(bar[:len(input) + 4])
@@ -1084,7 +1054,7 @@ func print_registration_password(input string, error []byte) {
 			line_3 := string(bar[:24])
 			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
 		}
-		fmt.Print(string(vertical_space[:terminal_height/2]))
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
 	} else {
 		fmt.Println(string(horizontal_line))
 		fmt.Println("Please enter a passowrd")
@@ -1094,7 +1064,7 @@ func print_registration_password(input string, error []byte) {
 		fmt.Println("- Must contain at least one special character (!, @, #, $, %, ?)")
 		fmt.Println("- Must be at least 7 characters long")
 		fmt.Println(string(horizontal_line))
-		fmt.Print(string(vertical_space[:terminal_height/2 - 11]))
+		fmt.Print(string(vertical_space[:terminal_height/2 - 10]))
 
 		if len(input) > 20 {
 			line_1 := string(bar[:len(input) + 4])
@@ -1118,7 +1088,7 @@ func print_registration_password(input string, error []byte) {
 		}
 		line_4 := "         " + RED + string(error) + RESET
 		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
-		fmt.Print(string(vertical_space[:terminal_height/2-1]))
+		fmt.Print(string(vertical_space[:terminal_height/2-3]))
 	}
 }
 
@@ -1210,6 +1180,7 @@ func login() {
 		if packet.Type == ACCEPT {
 			break
 		} else {
+			go play_sound("error.mp3")
 			print_login_username(string(input), packet.Data)
 		}
 	}
@@ -1313,6 +1284,7 @@ func login() {
 			client_status = IN_MAIN_MENU
 			break
 		} else {
+			go play_sound("error.mp3")
 			print_login_password(string(password_mask), packet.Data)
 		}
 	}
@@ -1337,7 +1309,7 @@ func print_login_username(input string, error []byte) {
 	}
 
 	if error == nil {
-		fmt.Print(string(vertical_space[:terminal_height/2-5]))
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
 		line_1 := "Enter your username below:"
 		fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
 		if len(input) > 20 {
@@ -1360,9 +1332,9 @@ func print_login_username(input string, error []byte) {
 			line_3 := string(bar[:24])
 			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
 		}
-		fmt.Print(string(vertical_space[:terminal_height/2]))
+		fmt.Print(string(vertical_space[:terminal_height/2-4]))
 	} else {
-		fmt.Print(string(vertical_space[:terminal_height/2-5]))
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
 		line_1 := "Enter your username below:"
 		fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
 		if len(input) > 20 {
@@ -1387,7 +1359,7 @@ func print_login_username(input string, error []byte) {
 		}
 		line_4 := "         " + RED + string(error) + RESET
 		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
-		fmt.Print(string(vertical_space[:terminal_height/2]))
+		fmt.Print(string(vertical_space[:terminal_height/2-4]))
 	}
 }
 
@@ -1407,7 +1379,7 @@ func print_login_password(input string, error []byte) {
 	}
 
 	if error == nil {
-		fmt.Print(string(vertical_space[:terminal_height/2-5]))
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
 		line_1 := "Enter your password below:"
 		fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
 		if len(input) > 20 {
@@ -1430,9 +1402,9 @@ func print_login_password(input string, error []byte) {
 			line_3 := string(bar[:24])
 			fmt.Printf("%*s\n", ((terminal_width-len(line_3))/2)+len(line_3), line_3)
 		}
-		fmt.Print(string(vertical_space[:terminal_height/2]))
+		fmt.Print(string(vertical_space[:terminal_height/2-4]))
 	} else {
-		fmt.Print(string(vertical_space[:terminal_height/2-5]))
+		fmt.Print(string(vertical_space[:terminal_height/2-2]))
 		line_1 := "Enter your password below:"
 		fmt.Printf("%*s\n", ((terminal_width-len(line_1))/2)+len(line_1), line_1)
 		if len(input) > 20 {
@@ -1457,7 +1429,7 @@ func print_login_password(input string, error []byte) {
 		}
 		line_4 := "         " + RED + string(error) + RESET
 		fmt.Printf("%*s\n", ((terminal_width-len(line_4))/2)+len(line_4), line_4)
-		fmt.Print(string(vertical_space[:terminal_height/2]))
+		fmt.Print(string(vertical_space[:terminal_height/2-4]))
 	}
 }
 
@@ -1530,6 +1502,10 @@ func message() {
 
 			// printing login screen
 			print_chat_strand(input, err_msg)
+		}
+
+		if input == nil {
+			continue
 		}
 
 		// checks if a command was entered and executes it if it was
@@ -1949,13 +1925,17 @@ func main_menu() {
 					exit_command(cpack)
 				} else if key == keyboard.KeySpace {
 					input = append(input, ' ')
-				} else if key == keyboard.KeyTab {
+				} else if key == keyboard.KeyTab || key == keyboard.KeyArrowLeft || key == keyboard.KeyArrowRight{
 					continue
 				} else if key == keyboard.KeyEsc {
 					// creating go routine to handle displaying the menu
 					go display_main_menu(choice_channel, channels)
 					break
-				} else {
+				} else if key == keyboard.KeyArrowUp || key == keyboard.KeyArrowDown {
+					// creating go routine to handle displaying the menu
+					go display_main_menu(choice_channel, channels)
+					break
+				} else{
 					input = append(input, byte(char))
 				}
 
@@ -2215,26 +2195,23 @@ func exit_command(cpack Command_packet) []byte {
 	// send command to server
 	send_command_packet(cpack)
 
-	// // checking if the server changed states
-	// cpack = read_command_packet()
-	// if cpack.Type != EXIT || string(cpack.Arguments) != "READY" {
-	// 	custom_error_exit(UNKNOWN)
-	// }
+	// checking if the server changed states
+	cpack = read_command_packet()
+	if cpack.Type != EXIT || string(cpack.Arguments) != "READY" {
+		custom_error_exit(UNKNOWN)
+	}
 
-	// // closing function on server side that is using data_socket
-	// dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
-	// send_data_packet(dpack)
+	// closing function on server side that is using data_socket
+	dpack := Data_packet{Type: CLOSE, Username: "", Data: []byte("Client disconnecting")}
+	send_data_packet(dpack)
 
-	// // creating exit packet
-	// cpack.Type = EXIT
-	// cpack.Username = username
-	// cpack.Arguments = []byte("CLOSE_SENT")
+	// creating exit packet
+	cpack.Type = EXIT
+	cpack.Username = username
+	cpack.Arguments = []byte("CLOSE_SENT")
 
-	// // sending packet to server
-	// send_command_packet(cpack)
-
-	// // reading from server
-	// read_command_packet()
+	// sending packet to server
+	send_command_packet(cpack)
 
 	// shutting down client
 	shutdown()
