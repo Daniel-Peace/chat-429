@@ -122,6 +122,7 @@ const (
 	MENU_OPTION         // 7	Used to send menu options
 	CLOSE               // 8 Used to close a function if the state changes of the client
 	ESC                 // 9 used when a user uses escape to go back
+	REFRESH             // 10 used to refresh certain screens
 )
 
 // roles for the client
@@ -1601,6 +1602,12 @@ func handle_inbound_msg(input *[]byte) {
 			return
 		}
 
+		if packet.Type == REFRESH {
+			current_channel = packet.Data
+			// reprinting updated chat strand
+			print_chat_strand(*input, nil)
+		}
+
 		// checking packet type
 		if packet.Type == MESSAGE || packet.Type == JOIN_MSG || packet.Type == LEAVE_MSG {
 			// appending new message to chat strand
@@ -1672,9 +1679,9 @@ func print_chat_strand(input []byte, err_msg []byte) {
 	clear_terminal()
 
 	// forcing text box to bottom of screen
-	fmt.Print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+	fmt.Print(string(vertical_space))
 	fmt.Println(string(horizontal_line))
-	start_of_chat_banner := "This is the beggining of the " + string(current_channel) + " group chat"
+	start_of_chat_banner := "This is the beginning of the #" + string(current_channel) + " group chat"
 	fmt.Printf("%*s\n", ((terminal_width-len(start_of_chat_banner))/2)+len(start_of_chat_banner), start_of_chat_banner)
 	fmt.Print("\n\n")
 
@@ -2292,7 +2299,7 @@ func help_command(cpack Command_packet) []byte {
 	} else if string(packet.Arguments) == "2" {
 		go display_help_screen(quit_channel, ADMIN)
 	} else {
-		os.Exit(1)
+		custom_error_exit(UNEXPECTED_DATA)
 	}
 
 	quit_channel <- 1

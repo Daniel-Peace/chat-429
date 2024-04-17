@@ -101,6 +101,7 @@ const (
 	MENU_OPTION         // 7	Used to send menu options
 	CLOSE               // 8 Used to close a function if the state changes of the client
 	ESC                 // 9 used when a user uses escape to go back
+	REFRESH             // 10 used to refresh certain screens
 )
 
 // user roles
@@ -1059,7 +1060,7 @@ func message(client Client) {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
-		// sending message to everyone in the default chat
+		// sending message to everyone in the chat
 		active_clients_mutex.Lock()
 		channels_mutex.Lock()
 		for _, user := range channels[client.Current_channel].Users {
@@ -1442,11 +1443,13 @@ func help_command(client Client, command Parsed_command) {
 	// checking if an arguemtns were passed to help
 	if len(command.Args) > 0 {
 		cpack.Arguments = []byte("Too many arguments")
+		cpack.Successful = false
 		send_command_packet(cpack, client)
 		return
 	}
 
 	cpack.Arguments = []byte("OK")
+	cpack.Successful = true
 	send_command_packet(cpack, client)
 
 	cpack = read_command_packet(client)
@@ -1618,7 +1621,18 @@ func change_topic_command(client Client, command Parsed_command) {
 			cpack.Arguments = []byte("No chat found with the name \"" + string(command.Args[1]) + "\"")
 		} else {
 			channels[index].Topic = []byte(command.Args[1])
-			cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[0])
+			cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[1])
+
+			var refresh_packet Data_packet
+			refresh_packet.Type = REFRESH
+			refresh_packet.Data = []byte(command.Args[1])
+
+			active_clients_mutex.Lock()
+			for _, user := range channels[client.Current_channel].Users {
+				send_data_packet(refresh_packet, *active_clients[user])
+			}
+			active_clients_mutex.Unlock()
+
 		}
 	}
 
@@ -1843,6 +1857,12 @@ func clear_terminal() {
 func create_channel(command Parsed_command) ([]byte, bool) {
 	// creating channel struct
 	channel := Channel{Topic: []byte(command.Args[0]), Users: nil}
+
+	for _, channel := range channels {
+		if string(channel.Topic) == string(command.Args[0]) {
+			return []byte("A channel already exists with the name"), false
+		}
+	}
 
 	// finding free slot for channel
 	free_slot_index := find_free_channel_slot()
