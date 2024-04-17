@@ -2527,11 +2527,6 @@ func display_public_commands() {
 	fmt.Print("\n")
 	fmt.Println(" - /main\t\t\t\tDisconnects you from the current channel and takes you to the main menu")
 	fmt.Print("\n")
-	fmt.Println(" - /log-out\t\t\t\tLogs out of the current account and takes you to the sign in screen")
-	fmt.Print("\n")
-	fmt.Println(" - /list-c\t\t\t\tLists all users in the current channel")
-	fmt.Print("\n")
-	fmt.Println(" - /list-s\t\t\t\tLists all users on the server")
 }
 
 /*
@@ -2541,17 +2536,9 @@ func display_moderator_commands() {
 	fmt.Print("\n")
 	fmt.Println("Moderator commands:")
 	fmt.Print("\n")
-	fmt.Println(" - /disconnect-c <channel> <username>\tDisconnects a user from a specific channel")
-	fmt.Print("\n")
-	fmt.Println(" - /disconnect-s <username>\t\tDisconnects a user from the server")
-	fmt.Print("\n")
-	fmt.Println(" - /ban-c <channel> <username>\t\tBans a user from a specific channel")
-	fmt.Print("\n")
 	fmt.Println(" - /ban-s <username>\t\t\tBans a user from the server")
 	fmt.Print("\n")
 	fmt.Println(" - /create <topic>\t\t\tCreates a new channel with a given topic")
-	fmt.Print("\n")
-	fmt.Println(" - /delete <channel>\t\t\tDeletes a specific channel")
 	fmt.Print("\n")
 	fmt.Println(" - /change-topic <channel> <topic>\tchanges the topic of a specific channel")
 }
