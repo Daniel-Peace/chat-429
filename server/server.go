@@ -2,10 +2,8 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -93,16 +91,17 @@ const (
 
 // packet types
 const (
-	ACCEPT          = iota // 0	Used to indicate a name or password was accepted
-	DENY                   // 1	Used to indicate a name or password was denied
-	MESSAGE                // 2	Used to send a standard message to a channel
-	JOIN_MSG        	   // 3 Used to send a joining message to a chat
-	LEAVE_MSG        	   // 4 Used to send a leaving message to a chat
-	REGISTRATION           // 5	Used to send a username or password for registering a user
-	LOGIN                  // 6	Used to send a username or password for loggin in
-	MENU_OPTION            // 7	Used to send menu options
-	CLOSE                  // 8 Used to close a function if the state changes of the client
-	ESC					   // 9 used when a user uses escape to go back
+	ACCEPT       = iota // 0	Used to indicate a name or password was accepted
+	DENY                // 1	Used to indicate a name or password was denied
+	MESSAGE             // 2	Used to send a standard message to a channel
+	JOIN_MSG            // 3 Used to send a joining message to a chat
+	LEAVE_MSG           // 4 Used to send a leaving message to a chat
+	REGISTRATION        // 5	Used to send a username or password for registering a user
+	LOGIN               // 6	Used to send a username or password for loggin in
+	MENU_OPTION         // 7	Used to send menu options
+	CLOSE               // 8 Used to close a function if the state changes of the client
+	ESC                 // 9 used when a user uses escape to go back
+	REFRESH             // 10 used to refresh certain screens
 )
 
 // user roles
@@ -149,20 +148,20 @@ type Data_packet struct {
 
 // struct for holding a command packet
 type Command_packet struct {
-	Type      	int
-	Username  	string
-	Arguments 	[]byte
-	Successful	bool
-	Message 	[]byte
+	Type       int
+	Username   string
+	Arguments  []byte
+	Successful bool
+	Message    []byte
 }
 
 // struct for holding a parsed command
 type Parsed_command struct {
-	Type     	int
-	Username 	string
-	Args     	[]string
-	Successful	bool
-	Message 	[]byte
+	Type       int
+	Username   string
+	Args       []string
+	Successful bool
+	Message    []byte
 }
 
 type Channel struct {
@@ -203,6 +202,8 @@ var (
 func main() {
 	// initializing and starting the server
 	start_server()
+
+	// closing passive socket once main exits
 	defer accept_socket.Close()
 
 	// handling connecting clients
@@ -215,7 +216,9 @@ func main() {
  * This function initializes everything in order to start the server
  */
 func start_server() {
+	// clearing terminal
 	clear_terminal()
+
 	fmt.Println("-------------------------------------------------------------------------")
 	fmt.Println("system: Starting server...")
 
@@ -251,7 +254,9 @@ func start_server() {
 func init_num_of_active_clients() {
 	num_of_active_clients_mutex.Lock()
 	defer num_of_active_clients_mutex.Unlock()
+
 	num_of_active_clients = 0
+
 	msg := GREEN + " - initialized counter for clients\n" + RESET
 	fmt.Print(msg)
 }
@@ -263,8 +268,10 @@ func init_channels() {
 	channels_mutex.Lock()
 	defer channels_mutex.Unlock()
 
+	// allocating space for channel array
 	channels = make([]*Channel, MAX_CHANNELS)
 
+	// adding default channel to array and setting the rest of the slot to available
 	for index := 0; index < MAX_CHANNELS; index++ {
 		if index == 0 {
 			channels[index] = &Channel{Id: index, Topic: []byte("nonsense"), Users: nil}
@@ -281,7 +288,7 @@ func init_active_clients() {
 	active_clients_mutex.Lock()
 	defer active_clients_mutex.Unlock()
 
-	// allocating space for array of structs
+	// allocating space for array of clients
 	active_clients = make([]*Client, MAX_CLIENTS)
 
 	// initializing each client in the array
@@ -315,8 +322,10 @@ func load_accounts() {
 
 	// adding the admin account to the registered accounts array
 	admin_account := Account_info{Username: "Admin", Password: "gochat", Role: ADMIN, Banned: false}
+
 	registered_accounts_mutex.Lock()
 	defer registered_accounts_mutex.Unlock()
+
 	registered_accounts = append(registered_accounts, admin_account)
 
 	// looping through files in folder
@@ -357,8 +366,7 @@ func load_accounts() {
 }
 
 /*
- * This function is a helper function for load_accounts
- * It creates an array of file names of file in a specified directory
+ * This function creates an array of file names for the files in a given directory
  */
 func read_accounts_directory() []fs.DirEntry {
 	files, err := os.ReadDir("./users")
@@ -369,7 +377,7 @@ func read_accounts_directory() []fs.DirEntry {
 }
 
 /*
- * This function opens a file and handles the possible errors
+ * This function opens a file
  */
 func open_file(path string) *os.File {
 	file, err := os.Open(path)
@@ -390,14 +398,16 @@ func close_file(file *os.File) {
 }
 
 /*
- * This function creates a listening socket and handles the possible errors
+ * This function creates a listening socket
  */
 func create_socket() {
 	listener, err := net.Listen(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
 	if err != nil {
 		error_exit(err)
 	}
+
 	accept_socket = listener
+
 	msg := GREEN + " - created passive socket\n" + RESET
 	fmt.Print(msg)
 }
@@ -433,7 +443,7 @@ func handle_ctrl_c(signale chan os.Signal) {
 }
 
 /*
- * This function saves all current accounts to the json
+ * This function saves all current accounts to the json files and stores them in the users directory
  */
 func save_accounts() {
 	// removing preexising files
@@ -494,15 +504,19 @@ func accept_client(server net.Listener) net.Conn {
 	if err != nil {
 		error_exit(err)
 	}
+
 	fmt.Println("system: client connected")
+
 	return command_socket
 }
 
 /*
- * This function write all of the accounts current in the accounts array to a json file
+ * This function writes all of the accounts currently in the accounts array to a json files
  */
 func write_accounts_to_json() {
+	// looping over registered_accounts
 	for index, account := range registered_accounts {
+		// skipping first account since this is the admin account
 		if index == 0 {
 			continue
 		}
@@ -533,6 +547,7 @@ func create_file(path string) *os.File {
 	if err != nil {
 		error_exit(err)
 	}
+
 	return file
 }
 
@@ -560,10 +575,19 @@ func serve_client_if_space(command_socket net.Conn) {
 
 		// disconnecting client
 		fmt.Println("system: server is full, disconnecting client")
+
+		// creating the data packet
 		packet := Data_packet{Type: DENY, Data: []byte("Server is full. Try again later")}
+
+		// marshaling the data
 		json_data := marshal_packet(packet)
+
+		// sending the packet to the client
 		write_to_connection(command_socket, json_data)
+
+		// closing the socket
 		command_socket.Close()
+
 		return
 	}
 	num_of_active_clients_mutex.Unlock()
@@ -586,9 +610,9 @@ func serve_client_if_space(command_socket net.Conn) {
 	client := active_clients[index]
 	active_clients_mutex.Unlock()
 
-	// serving the client
-	fmt.Println("system: serving client")
+	// starting go routine to serve client
 	go serve_client(*client)
+	fmt.Println("system: serving client")
 }
 
 /*
@@ -606,18 +630,19 @@ func establish_data_socket(command_socket net.Conn) net.Conn {
 	if err != nil {
 		error_exit(err)
 	}
+
 	fmt.Println("system: Created data socket")
+
 	return data_socket
 }
 
 /*
- * This function checks if the server is full and increments
- * the number of active clients if there is space.
- * It return true it successfully incremented
+ * This function increments num_of_active_clients
  */
 func increment_active_clients() {
 	num_of_active_clients_mutex.Lock()
 	defer num_of_active_clients_mutex.Unlock()
+
 	num_of_active_clients++
 }
 
@@ -635,7 +660,9 @@ func find_free_space_for_client() int {
 			return index
 		}
 	}
+
 	custom_error_exit(UNKNOWN)
+
 	return -1
 }
 
@@ -649,10 +676,9 @@ func serve_client(client Client) {
 	// core loop to handle a clients state
 	for {
 		// getting latest state if client
-		active_clients_mutex.Lock()
-		client = *active_clients[client.Id]
-		active_clients_mutex.Unlock()
+		client = update_client(client)
 
+		// switching on the state of the client
 		switch client.State {
 		case CHOOSING_SIGN_IN_OPT:
 			choose_sign_in_opt(client)
@@ -677,6 +703,7 @@ func serve_client(client Client) {
 func choose_sign_in_opt(client Client) {
 	// reading packet from client
 	packet := read_data_packet(client)
+	fmt.Printf("system: Packet type %d\n", packet.Type)
 	fmt.Printf("system: Received menu option \"%s\" from client #%d\n", string(packet.Data), client.Id)
 
 	// checking if the client has changed state and this function needs to return
@@ -690,10 +717,10 @@ func choose_sign_in_opt(client Client) {
 	}
 
 	// checking if user selected login or register
-	if string(packet.Data) == "login" {
+	if string(packet.Data) == "LOGIN" {
 		update_client_state(client, LOGGING_IN)
 		client.State = LOGGING_IN
-	} else if string(packet.Data) == "register" {
+	} else if string(packet.Data) == "REGISTER" {
 		update_client_state(client, REGISTERING)
 		client.State = REGISTERING
 	} else {
@@ -708,6 +735,8 @@ func choose_sign_in_opt(client Client) {
 func register_client(client Client) {
 	// getting and validating username
 	var username string
+
+	// looping until a valid username is entered, the user hits esc, or the user quits
 	for {
 		// reading packet from client
 		packet := read_data_packet(client)
@@ -719,6 +748,7 @@ func register_client(client Client) {
 			return
 		}
 
+		// checking if user pressed the escape key
 		if packet.Type == ESC {
 			update_client_state(client, CHOOSING_SIGN_IN_OPT)
 			return
@@ -729,6 +759,7 @@ func register_client(client Client) {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
+		// saving username temporarely
 		username = string(packet.Data)
 
 		// validating username
@@ -749,6 +780,8 @@ func register_client(client Client) {
 
 	// getting and validating password
 	var password string
+
+	// looping until a valid password is entered, the user hits esc, or the user quits
 	for {
 		// reading packet from client
 		packet := read_data_packet(client)
@@ -760,6 +793,7 @@ func register_client(client Client) {
 			return
 		}
 
+		// checking if user pressed the escape key
 		if packet.Type == ESC {
 			update_client_state(client, CHOOSING_SIGN_IN_OPT)
 			active_clients_mutex.Lock()
@@ -882,8 +916,9 @@ func login(client Client) {
 	var index int
 	var exists bool
 
-	// checking for account with name
+	// looping until a valid username is entered, the user hits esc, or the user quits
 	for {
+		// read packet from
 		packet := read_data_packet(client)
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
 		print_data_packet(packet)
@@ -893,6 +928,7 @@ func login(client Client) {
 			return
 		}
 
+		// checking if user pressed the escape key
 		if packet.Type == ESC {
 			update_client_state(client, CHOOSING_SIGN_IN_OPT)
 			return
@@ -927,16 +963,21 @@ func login(client Client) {
 			continue
 		}
 
+		// adding client's username to active clients
 		active_clients_mutex.Lock()
 		active_clients[client.Id].Account_info.Username = string(packet.Data)
 		active_clients_mutex.Unlock()
+
 		fmt.Printf("system: Found account for the name given by client #%s\n", string(client.Id))
+
+		// creating and sending accept packet
 		packet.Type = ACCEPT
 		packet.Data = []byte("Found account with that username")
 		send_data_packet(packet, client)
 		break
 	}
 
+	// looping until a valid password is entered, the user hits esc, or the user quits
 	for {
 		packet := read_data_packet(client)
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
@@ -947,6 +988,7 @@ func login(client Client) {
 			return
 		}
 
+		// checking if user pressed the escape key
 		if packet.Type == ESC {
 			update_client_state(client, CHOOSING_SIGN_IN_OPT)
 			active_clients_mutex.Lock()
@@ -983,7 +1025,10 @@ func login(client Client) {
 	}
 }
 
-func is_banned(user_index int) bool{
+/*
+ * This function checks if a user is banned from ther server
+ */
+func is_banned(user_index int) bool {
 	registered_accounts_mutex.Lock()
 	defer registered_accounts_mutex.Unlock()
 
@@ -994,9 +1039,11 @@ func is_banned(user_index int) bool{
  * This function handles messaging
  */
 func message(client Client) {
+	// looping until user goes back to main menu or quits
 	for {
-
+		// updating client
 		client = update_client(client)
+
 		// reading packet from client
 		packet := read_data_packet(client)
 		fmt.Printf("system: Received data packet from client #%d\n", client.Id)
@@ -1013,7 +1060,7 @@ func message(client Client) {
 			custom_error_exit(OUT_OF_SYNC)
 		}
 
-		// sending message to everyone in the default chat
+		// sending message to everyone in the chat
 		active_clients_mutex.Lock()
 		channels_mutex.Lock()
 		for _, user := range channels[client.Current_channel].Users {
@@ -1037,7 +1084,13 @@ func name_is_exists(username string) (int, bool) {
 	for index, current_account := range registered_accounts {
 		// checking if username exists
 		if current_account.Username == username {
-			fmt.Printf("index of account: %d\n", index)
+			return index, true
+		}
+	}
+
+	// looping over active clients
+	for index, current_user := range active_clients {
+		if current_user.Account_info.Username == username {
 			return index, true
 		}
 	}
@@ -1075,7 +1128,7 @@ func custom_error_exit(err int) {
 }
 
 /*
- * This function handles disconnecting a client
+ * This function handles removing a client from the active clients list
  */
 func sub_client(client Client) {
 	fmt.Println("system: Disconnecting client...")
@@ -1105,11 +1158,12 @@ func sub_client(client Client) {
 func decrement_num_of_active_clients() {
 	num_of_active_clients_mutex.Lock()
 	defer num_of_active_clients_mutex.Unlock()
+
 	num_of_active_clients--
 }
 
 /*
- * this function checks if an account is logged in
+ * This function checks if an account is logged in
  * It returns true if an account is indeed logged in
  */
 func is_logged_in(username string) bool {
@@ -1203,24 +1257,13 @@ func read_command_packet(client Client) Command_packet {
  * This function writes to a specified net.Conn
  */
 func write_to_connection(connection net.Conn, data []byte) {
+	if connection == nil {
+		return
+	}
+
 	_, err := connection.Write(data)
 	if err != nil {
 		fmt.Println("system: Failed to write to socket")
-		if errors.Is(err, io.EOF) {
-            // Socket gracefully closed by the other end
-            return 
-        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
-            // Socket closed or invalid file descriptor
-            return
-        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
-            // Another way to check for EOF wrapped in net.OpError
-            return
-        } else if errors.Is(err, io.ErrClosedPipe) {
-            // Closed pipe
-            return
-        } else {
-			error_exit(err)
-		}
 	}
 }
 
@@ -1228,26 +1271,15 @@ func write_to_connection(connection net.Conn, data []byte) {
  * This function reads from a specified net.Conn
  */
 func read_from_connection(connection net.Conn) ([]byte, int) {
+	if connection == nil {
+		return nil, -1
+	}
+
 	// reading packet from user
 	data := make([]byte, MAX_PACKET_SIZE)
 	amount_read, err := connection.Read(data)
 	if err != nil {
 		fmt.Println("system: Failed to read from socket")
-		if errors.Is(err, io.EOF) {
-            // Socket gracefully closed by the other end
-            return nil, -1
-        } else if errors.Is(err, syscall.EBADF) || errors.Is(err, os.ErrClosed) {
-            // Socket closed or invalid file descriptor
-            return nil, -1
-        } else if ne, ok := err.(*net.OpError); ok && ne.Err == io.EOF {
-            // Another way to check for EOF wrapped in net.OpError
-            return nil, -1
-        } else if errors.Is(err, io.ErrClosedPipe) {
-            // Closed pipe
-            return nil, -1
-        } else {
-			error_exit(err)
-		}
 	}
 	return data, amount_read
 }
@@ -1324,8 +1356,10 @@ func handle_inbound_commands(client Client) {
 func execute_command(command_packet Command_packet, client Client) bool {
 	// parsing the command
 	command := parse_command(command_packet)
-	fmt.Printf("system: Recieved command of type \"%d\" with %d arguments\n", command.Type, len(command.Args))
 
+	fmt.Printf("system: Recieved command of type \"%d\" with %d arguments from client #%d\n", command.Type, len(command.Args), client.Id)
+
+	// switching on the command type
 	switch command.Type {
 	case HELP:
 		fmt.Println("system: Running help command")
@@ -1409,11 +1443,13 @@ func help_command(client Client, command Parsed_command) {
 	// checking if an arguemtns were passed to help
 	if len(command.Args) > 0 {
 		cpack.Arguments = []byte("Too many arguments")
+		cpack.Successful = false
 		send_command_packet(cpack, client)
 		return
 	}
 
 	cpack.Arguments = []byte("OK")
+	cpack.Successful = true
 	send_command_packet(cpack, client)
 
 	cpack = read_command_packet(client)
@@ -1450,20 +1486,27 @@ func exit_command(client Client) {
 	// udpating client status to quitting
 	update_client_state(client, QUITTING)
 
-	// // informing client to send data packet to siganl main client routine to end
-	// cpack := Command_packet{Type: EXIT, Username: client.Account_info.Username, Arguments: []byte("READY")}
-	// send_command_packet(cpack, client)
+	// updating client to quitting
+	disconnect_client(client)
+}
 
-	// // waiting for ack that close packet was sent
-	// cpack = read_command_packet(client)
-	// if cpack.Type != EXIT || string(cpack.Arguments) != "CLOSE_SENT" {
-	// 	custom_error_exit(UNKNOWN)
-	// }
+func disconnect_client(client Client) {
+	// updating the client's state to quitting
+	update_client_state(client, QUITTING)
 
-	// cpack.Arguments = []byte("CLOSING")
-	// send_command_packet(cpack, client)
+	// informing client that the state has been changed
+	var cpack Command_packet
+	cpack.Type = EXIT
+	cpack.Username = client.Account_info.Username
+	cpack.Arguments = []byte("READY")
+	send_command_packet(cpack, client)
 
-	// time.Sleep(2 * time.Second)
+	cpack = read_command_packet(client)
+	if client.Current_channel > -1 {
+		leave_channel(client)
+	}
+
+	time.Sleep(5 * time.Second)
 
 	sub_client(client)
 }
@@ -1495,8 +1538,9 @@ func create_command(client Client, command Parsed_command) {
 		var successful bool
 		cpack.Message, successful = create_channel(command)
 
-		// creating args from channel list
+		// checking if the channel was created successfully
 		if successful {
+			// building a string from the channel array
 			var channel_list strings.Builder
 			channels_mutex.Lock()
 			for index, channel := range channels {
@@ -1510,15 +1554,12 @@ func create_command(client Client, command Parsed_command) {
 			channels_mutex.Unlock()
 
 			cpack.Arguments = []byte(channel_list.String())
-
 			cpack.Successful = true
 		} else {
-			cpack.Arguments = nil 
+			cpack.Arguments = nil
 			cpack.Successful = false
 		}
 	}
-
-
 
 	// sending packet
 	send_command_packet(cpack, client)
@@ -1528,10 +1569,12 @@ func create_command(client Client, command Parsed_command) {
  * This function handles the main command
  */
 func main_command(client Client, command Parsed_command) {
+	// creating part of the return packet
 	var cpack Command_packet
 	cpack.Type = MAIN
 	cpack.Username = client.Account_info.Username
 
+	// checking if args were passed in with the command
 	if len(command.Args) > 0 {
 		cpack.Arguments = []byte("Too many arguments")
 	} else if leave_channel(client) {
@@ -1542,6 +1585,8 @@ func main_command(client Client, command Parsed_command) {
 	} else {
 		cpack.Arguments = []byte("Failed to leave channel")
 	}
+
+	// sending resonse to client
 	send_command_packet(cpack, client)
 }
 
@@ -1556,24 +1601,42 @@ func change_topic_command(client Client, command Parsed_command) {
 	cpack.Type = CHANGE_TOPIC
 	cpack.Username = client.Account_info.Username
 
+	// ensuring proper arguments, permissions, and other requirements
 	if client.Account_info.Role <= PUBLIC {
 		cpack.Arguments = []byte("You don't have permission to use this command")
 	} else if len(command.Args) < 2 {
 		cpack.Arguments = []byte("Not enough arguments")
 	} else if len(command.Args) > 2 {
 		cpack.Arguments = []byte("Too many arguments")
+	} else if command.Args[0] == "nonsense" {
+		cpack.Arguments = []byte("Default channel. Cannot change this channel's topic")
 	} else {
 		index := get_channel_id([]byte(command.Args[0]))
 
 		channels_mutex.Lock()
 		defer channels_mutex.Unlock()
+
+		// checking if the channel exists
 		if index == -1 {
 			cpack.Arguments = []byte("No chat found with the name \"" + string(command.Args[1]) + "\"")
 		} else {
 			channels[index].Topic = []byte(command.Args[1])
-			cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[0])
+			cpack.Arguments = []byte("Successfully changed channel topic to #" + command.Args[1])
+
+			var refresh_packet Data_packet
+			refresh_packet.Type = REFRESH
+			refresh_packet.Data = []byte(command.Args[1])
+
+			active_clients_mutex.Lock()
+			for _, user := range channels[client.Current_channel].Users {
+				send_data_packet(refresh_packet, *active_clients[user])
+			}
+			active_clients_mutex.Unlock()
+
 		}
 	}
+
+	// sending response to server
 	send_command_packet(cpack, client)
 }
 
@@ -1584,10 +1647,12 @@ func add_mod_command(client Client, command Parsed_command) {
 	// updating client struct
 	client = update_client(client)
 
+	// creating return packet
 	var cpack Command_packet
 	cpack.Type = ADD_MOD
 	cpack.Username = client.Account_info.Username
 
+	// checking requirements
 	if client.Account_info.Role < ADMIN {
 		cpack.Arguments = []byte("You don't have permission to use this command")
 	} else if len(command.Args) < 1 {
@@ -1599,6 +1664,8 @@ func add_mod_command(client Client, command Parsed_command) {
 		active_clients_mutex.Lock()
 		found_1 := false
 		found_2 := false
+
+		// finding account
 		for _, user := range active_clients {
 			if user.Account_info.Username == command.Args[0] {
 				user.Account_info.Role = 1
@@ -1618,15 +1685,20 @@ func add_mod_command(client Client, command Parsed_command) {
 		}
 		active_clients_mutex.Unlock()
 
+		// checking if account exists
 		if found_1 && found_2 {
 			cpack.Arguments = []byte("Successfully gave " + command.Args[0] + " the moderator role")
 		} else {
 			cpack.Arguments = []byte("Did not find account with that name")
 		}
 	}
+
 	fmt.Println("system: sending command status")
+
+	// sending response
 	send_command_packet(cpack, client)
 
+	// saving changes to account
 	save_accounts()
 }
 
@@ -1665,11 +1737,17 @@ func rm_mod_command(client Client, command Parsed_command) {
 
 		cpack.Arguments = []byte("Successfully removed the moderator role from " + command.Args[0])
 	}
+
+	// sending response
 	send_command_packet(cpack, client)
 
+	// saving account changes
 	save_accounts()
 }
 
+/*
+ * This function checks permmisions and requriemtns and then attmp to ban a user from
+ */
 func ban_s_command(client Client, command Parsed_command) {
 	// updating client struct
 	client = update_client(client)
@@ -1701,6 +1779,8 @@ func ban_s_command(client Client, command Parsed_command) {
 			if is_public(user_index) {
 				ban_from_server(user_index)
 				cpack.Arguments = []byte("Banned " + command.Args[0] + " from the server")
+			} else if command.Args[0] == "Admin" {
+				cpack.Arguments = []byte("Cannot ban the Admin")
 			} else {
 				cpack.Arguments = []byte("Must be Admin to ban a moderator")
 			}
@@ -1710,6 +1790,9 @@ func ban_s_command(client Client, command Parsed_command) {
 	send_command_packet(cpack, client)
 }
 
+/*
+ * This function handles udpating the account to be banned
+ */
 func ban_from_server(user_index int) {
 	registered_accounts_mutex.Lock()
 	defer registered_accounts_mutex.Unlock()
@@ -1721,6 +1804,9 @@ func ban_from_server(user_index int) {
 	// TODO: Disconnect the user from the server
 }
 
+/*
+ * This function checks if an account has the public role
+ */
 func is_public(user_index int) bool {
 	registered_accounts_mutex.Lock()
 	defer registered_accounts_mutex.Unlock()
@@ -1728,10 +1814,14 @@ func is_public(user_index int) bool {
 	return registered_accounts[user_index].Role == PUBLIC
 }
 
+/*
+ * This function gets the index of an account given the accounts username
+ */
 func get_user_index(username string) int {
 	registered_accounts_mutex.Lock()
 	defer registered_accounts_mutex.Unlock()
 
+	// looping over registered accounts
 	for index, user := range registered_accounts {
 		if user.Username == username {
 			return index
@@ -1764,9 +1854,15 @@ func clear_terminal() {
 /*
  * This function creates a channel
  */
-func create_channel(command Parsed_command)([]byte, bool ) {
+func create_channel(command Parsed_command) ([]byte, bool) {
 	// creating channel struct
 	channel := Channel{Topic: []byte(command.Args[0]), Users: nil}
+
+	for _, channel := range channels {
+		if string(channel.Topic) == string(command.Args[0]) {
+			return []byte("A channel already exists with the name"), false
+		}
+	}
 
 	// finding free slot for channel
 	free_slot_index := find_free_channel_slot()
@@ -1806,6 +1902,11 @@ func main_menu(client Client) {
 	fmt.Println("Made it to main menu")
 	// reading packet from client
 	data_packet := read_data_packet(client)
+
+	// checking if the client has changed state and this function needs to return
+	if data_packet.Type == CLOSE {
+		return
+	}
 
 	// validating packet adn confirming client is ready
 	if data_packet.Type != MAIN || string(data_packet.Data) != "READY" {
@@ -1886,16 +1987,22 @@ func update_client(client Client) Client {
  * This function handles leaving a channel
  */
 func leave_channel(client Client) bool {
+	// updating client
 	client = update_client(client)
+
 	channels_mutex.Lock()
 	defer channels_mutex.Unlock()
 
+	// looping over users in a channel
 	for index, user := range channels[client.Current_channel].Users {
+		// checking if we found the user
 		if user == client.Id {
 
+			// sending leaving message
 			msg := "\n" + client.Account_info.Username + " has left the chat\n" + time.Now().Format("3:04 PM") + "\n"
 			send_message(client, LEAVE_MSG, msg)
 
+			// removing user from channel
 			if index+1 == len(channels[client.Current_channel].Users) {
 				if len(channels[client.Current_channel].Users) == 0 {
 					channels[client.Current_channel].Users = nil
@@ -1910,6 +2017,7 @@ func leave_channel(client Client) bool {
 
 		}
 	}
+
 	return false
 }
 
@@ -1919,12 +2027,14 @@ func leave_channel(client Client) bool {
 func send_message(client Client, msg_type int, msg string) {
 	var packet Data_packet
 
+	// checking if user left or joined
 	if msg_type == JOIN_MSG {
 		packet = Data_packet{Type: JOIN_MSG, Data: []byte(msg)}
 	} else {
 		packet = Data_packet{Type: LEAVE_MSG, Data: []byte(msg)}
 	}
 
+	// sending message to channel
 	active_clients_mutex.Lock()
 	for _, user := range channels[client.Current_channel].Users {
 		if user != client.Id {
@@ -1940,6 +2050,8 @@ func send_message(client Client, msg_type int, msg string) {
 func get_channel_id(topic []byte) int {
 	channels_mutex.Lock()
 	defer channels_mutex.Unlock()
+
+	// looping over channels
 	for index, channel := range channels {
 		if string(channel.Topic) == string(topic) {
 			return index
