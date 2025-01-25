@@ -23,7 +23,6 @@ import (
 // constants
 const (
 	// client and server information
-	// SERVER_HOST = "localhost"
 	SERVER_HOST     = "localhost"
 	CLIENT_HOST     = "localhost"
 	COMMAND_PORT    = "7777"
@@ -112,14 +111,14 @@ const (
 
 // packet types
 const (
-	ACCEPT       = iota // 0	Used to indicate a name or password was accepted
-	DENY                // 1	Used to indicate a name or password was denied
-	MESSAGE             // 2	Used to send a standard message to a channel
+	ACCEPT       = iota // 0 Used to indicate a name or password was accepted
+	DENY                // 1 Used to indicate a name or password was denied
+	MESSAGE             // 2 Used to send a standard message to a channel
 	JOIN_MSG            // 3 Used to send a joining message to a chat
 	LEAVE_MSG           // 4 Used to send a leaving message to a chat
-	REGISTRATION        // 5	Used to send a username or password for registering a user
-	LOGIN               // 6	Used to send a username or password for loggin in
-	MENU_OPTION         // 7	Used to send menu options
+	REGISTRATION        // 5 Used to send a username or password for registering a user
+	LOGIN               // 6 Used to send a username or password for loggin in
+	MENU_OPTION         // 7 Used to send menu options
 	CLOSE               // 8 Used to close a function if the state changes of the client
 	ESC                 // 9 used when a user uses escape to go back
 	REFRESH             // 10 used to refresh certain screens
@@ -295,7 +294,7 @@ func establish_data_connection() {
 
 /*
  * This function creates a signal catcher for
- * when the user enter ctrl-c
+ * when the user enters ctrl-c
  */
 func setup_signal_handler() {
 	sigChan := make(chan os.Signal, 1)
